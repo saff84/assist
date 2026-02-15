@@ -1,0 +1,3 @@
+ALTER TABLE documents
+  MODIFY COLUMN errorMessage LONGTEXT NULL;
+

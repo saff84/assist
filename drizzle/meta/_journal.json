@@ -1,0 +1,83 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1762247993341,
+      "tag": "0000_worried_absorbing_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1762248035245,
+      "tag": "0001_polite_carnage",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1767993600000,
+      "tag": "0003_structured_ingest",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1768100000000,
+      "tag": "0004_processing_progress",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1768100400000,
+      "tag": "0005_processing_message_longtext",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1768100800000,
+      "tag": "0006_processing_type_overhaul",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1768101200000,
+      "tag": "0007_document_type_overhaul",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1768101600000,
+      "tag": "0008_error_message_longtext",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1768102000000,
+      "tag": "0009_documents_utf8mb4",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1768675200000,
+      "tag": "0010_chat_history_diagnostics",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1769300000000,
+      "tag": "0011_catalog_product_workflows",
+      "breakpoints": true
+    }
+  ]
+}

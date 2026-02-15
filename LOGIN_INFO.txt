@@ -1,0 +1,5 @@
+Default Admin Login:
+Email: admin@admin.local
+Password: admin123
+
+Please change the password after first login!

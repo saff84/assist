@@ -1,0 +1,130 @@
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: ai_assistant_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ai_knowledge_db}
+      MYSQL_USER: ${MYSQL_USER:-assistant}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-assistant_password}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  # Ollama (Local LLM)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ai_assistant_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    command: serve
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      timeout: 20s
+      retries: 10
+
+  # Ollama Model Loader (runs once to download model)
+  ollama-setup:
+    image: ollama/ollama:latest
+    container_name: ai_assistant_ollama_setup
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "set -e;
+       echo 'Ensuring required Ollama models...';
+       for model in gemma2:2b qwen2.5:3b bge-m3; do
+         if ollama list | grep -q \"$$model\"; then
+           echo \"Model $$model already present\";
+         else
+           echo \"Pulling $$model\" && ollama pull \"$$model\";
+         fi;
+       done;
+       echo 'All models ready!';
+       exit 0"
+    restart: "no"
+
+  # Weaviate (Vector Database)
+  weaviate:
+    image: semitechnologies/weaviate:1.24.0
+    container_name: ai_assistant_weaviate
+    ports:
+      - "8080:8080"
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_APIKEY_ENABLED: 'false'
+      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/v1/.well-known/ready"]
+      timeout: 20s
+      retries: 10
+
+  # Main Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai_assistant_app
+    depends_on:
+      mysql:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      weaviate:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      # Database
+      DATABASE_URL: mysql://${MYSQL_USER:-assistant}:${MYSQL_PASSWORD:-assistant_password}@mysql:3306/${MYSQL_DATABASE:-ai_knowledge_db}
+      
+      # LLM Configuration
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: gemma2:2b
+      
+      # Vector DB Configuration
+      WEAVIATE_URL: http://weaviate:8080
+      
+      # Application
+      NODE_ENV: production
+      PORT: 3000
+      
+      # Default admin credentials (created automatically at first startup)
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@admin.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      ADMIN_NAME: ${ADMIN_NAME:-Administrator}
+      
+      # Bitrix24 (optional)
+      BITRIX24_WEBHOOK_URL: ${BITRIX24_WEBHOOK_URL}
+    volumes:
+      - ./client/src:/app/client/src
+      - ./server:/app/server
+      - uploads_data:/app/uploads
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  ollama_data:
+  weaviate_data:
+  uploads_data:
+
+networks:
+  default:
+    name: ai_assistant_network

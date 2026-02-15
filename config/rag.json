@@ -1,0 +1,57 @@
+{
+  "llm": {
+    "model": "qwen2.5:1.5b-instruct",
+    "temperature": 0,
+    "topP": 0.1,
+    "repeatPenalty": 1.1,
+    "maxTokens": 1024,
+    "language": "ru"
+  },
+  "retrieval": {
+    "embeddingModel": "bge-m3",
+    "hybridWeights": {
+      "embedding": 0.6,
+      "bm25": 0.4
+    },
+    "relevanceThreshold": 0.45,
+    "answerThreshold": 0.52,
+    "fallbackThreshold": 0.35,
+    "maxInitialChunks": 300,
+    "mmr": {
+      "lambda": 0.7,
+      "candidatePoolSize": 40,
+      "resultCount": 12
+    },
+    "boosts": {
+      "sectionMatch": 0.1,
+      "titleMatch": 0.08,
+      "tagMatch": 0.05,
+      "skuMatch": 0.12,
+      "instructionPriority": 0.2,
+      "catalogPriority": 0.15,
+      "termOverlap": 0.05,
+      "radiatorSectionPriority": 0.35,
+      "variantMatch": 0.35
+    },
+    "stopwords": {
+      "extra": [
+        "санекст",
+        "санекстовский"
+      ]
+    },
+    "reranker": {
+      "enabled": true,
+      "model": "bge-reranker-v2-m3"
+    },
+    "contextCaps": {
+      "maxChunks": 12,
+      "maxChunksPerDoc": 8,
+      "maxTokens": 6000,
+      "chunkTokenLimit": 900
+    }
+  },
+  "logging": {
+    "enabled": true
+  }
+}
+
