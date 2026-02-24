@@ -42,7 +42,7 @@ export default function DocumentVisualizationPage() {
 
   const getAnnotationTypeColor = (type: string, isNomenclature: boolean) => {
     if (isNomenclature) return "bg-green-500/20 border-green-500";
-    if (type === "table" || type === "table_with_articles") return "bg-blue-500/20 border-blue-500";
+    if (type === "table" || type === "technical_table" || type === "table_with_articles") return "bg-blue-500/20 border-blue-500";
     if (type === "figure") return "bg-purple-500/20 border-purple-500";
     if (type === "list") return "bg-orange-500/20 border-orange-500";
     return "bg-gray-500/20 border-gray-500";
@@ -51,6 +51,7 @@ export default function DocumentVisualizationPage() {
   const getAnnotationTypeIcon = (type: string) => {
     switch (type) {
       case "table":
+      case "technical_table":
       case "table_with_articles":
         return <Table className="w-4 h-4" />;
       case "figure":
@@ -119,6 +120,7 @@ export default function DocumentVisualizationPage() {
     // Count by annotation type
     const typeCounts = {
       table: 0,
+      technical_table: 0,
       table_with_articles: 0,
       text: 0,
       figure: 0,
@@ -362,6 +364,15 @@ export default function DocumentVisualizationPage() {
                   <div className="text-xs text-muted-foreground font-medium mt-1">Таблицы с артикулами</div>
                 </div>
               )}
+              {coverageStats.typeCounts.technical_table > 0 && (
+                <div className="flex flex-col items-center p-4 bg-blue-500/10 rounded-lg border border-blue-500/20 transition-all hover:shadow-md hover:bg-blue-500/15">
+                  <div className="p-2 bg-blue-500/20 rounded-lg mb-2">
+                    <Table className="w-5 h-5 text-blue-800 dark:text-blue-200" />
+                  </div>
+                  <div className="text-2xl font-bold text-blue-800 dark:text-blue-200">{coverageStats.typeCounts.technical_table}</div>
+                  <div className="text-xs text-muted-foreground font-medium mt-1">Тех. таблицы</div>
+                </div>
+              )}
               {coverageStats.typeCounts.nomenclature > 0 && (
                 <div className="flex flex-col items-center p-4 bg-green-500/10 rounded-lg border border-green-500/20 transition-all hover:shadow-md hover:bg-green-500/15">
                   <div className="p-2 bg-green-500/20 rounded-lg mb-2">
@@ -504,6 +515,8 @@ export default function DocumentVisualizationPage() {
                                           >
                                             {chunk.annotation!.annotationType === "table_with_articles"
                                               ? "Таблица с артикулами"
+                                              : chunk.annotation!.annotationType === "technical_table"
+                                              ? "Таблица тех. характеристик"
                                               : chunk.annotation!.annotationType === "table"
                                               ? "Таблица"
                                               : chunk.annotation!.annotationType === "figure"
@@ -612,13 +625,17 @@ export default function DocumentVisualizationPage() {
                                 className={
                                   isNomenclature
                                     ? "bg-green-500"
-                                    : chunk.annotation!.annotationType === "table" || chunk.annotation!.annotationType === "table_with_articles"
+                                    : chunk.annotation!.annotationType === "table" ||
+                                      chunk.annotation!.annotationType === "technical_table" ||
+                                      chunk.annotation!.annotationType === "table_with_articles"
                                     ? "bg-blue-500"
                                     : "bg-gray-500"
                                 }
                               >
                                 {chunk.annotation!.annotationType === "table_with_articles"
                                   ? "Таблица с артикулами"
+                                  : chunk.annotation!.annotationType === "technical_table"
+                                  ? "Таблица тех. характеристик"
                                   : chunk.annotation!.annotationType === "table"
                                   ? "Таблица"
                                   : chunk.annotation!.annotationType === "figure"
@@ -782,6 +799,8 @@ export default function DocumentVisualizationPage() {
                                       >
                                         {chunk.annotation!.annotationType === "table_with_articles"
                                           ? "Таблица с артикулами"
+                                          : chunk.annotation!.annotationType === "technical_table"
+                                          ? "Таблица тех. характеристик"
                                           : chunk.annotation!.annotationType === "table"
                                           ? "Таблица"
                                           : chunk.annotation!.annotationType === "figure"

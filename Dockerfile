@@ -1,18 +1,26 @@
-FROM node:22-alpine
+FROM node:22-bookworm-slim
 
 WORKDIR /app
 
 # Install system dependencies
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
-    make \
-    g++ \
-    cairo-dev \
-    jpeg-dev \
-    pango-dev \
-    giflib-dev \
-    pixman-dev \
-    libpng-dev
+    python3-pip \
+    python3-numpy \
+    python3-pandas \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    build-essential \
+    libcairo2-dev \
+    libjpeg62-turbo-dev \
+    libpango1.0-dev \
+    libgif-dev \
+    libpixman-1-dev \
+    libpng-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install pnpm globally
 RUN npm install -g pnpm@latest
@@ -20,6 +28,7 @@ RUN npm install -g pnpm@latest
 # Copy package files first for better caching
 COPY package.json ./
 COPY pnpm-lock.yaml* ./
+COPY scripts/table_extractor_requirements.txt ./scripts/table_extractor_requirements.txt
 
 # Copy patches directory BEFORE installing dependencies (pnpm needs them)
 COPY patches ./patches/
@@ -28,6 +37,15 @@ COPY patches ./patches/
 RUN echo "Installing dependencies..." && \
     pnpm install --no-frozen-lockfile && \
     echo "Dependencies installed successfully"
+
+# Install optional Python dependencies for advanced table extraction
+# (Camelot lattice + rapidfuzz + pdfplumber fallback)
+RUN if [ -f scripts/table_extractor_requirements.txt ]; then \
+      echo "Installing Python table extractor dependencies..." && \
+      python3 -m pip install --no-cache-dir --prefer-binary --break-system-packages -r scripts/table_extractor_requirements.txt; \
+    else \
+      echo "No table extractor requirements found, skipping."; \
+    fi
 
 # Copy all source code
 COPY . .

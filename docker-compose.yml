@@ -98,6 +98,7 @@ services:
       # LLM Configuration
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_MODEL: gemma2:2b
+      TABLE_EXTRACTOR_PYTHON: ${TABLE_EXTRACTOR_PYTHON:-python3}
       
       # Vector DB Configuration
       WEAVIATE_URL: http://weaviate:8080

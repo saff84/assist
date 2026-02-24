@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/sidebar";
 import { APP_LOGO, APP_TITLE } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, LogOut, PanelLeft, FileText, Settings, MessageSquare, BarChart3, Users, HelpCircle } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, FileText, Settings, MessageSquare, BarChart3, Users, HelpCircle, Bot } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 
@@ -30,6 +30,7 @@ const menuItems = [
   { icon: FileText, label: "Documents", path: "/documents" },
   { icon: HelpCircle, label: "FAQ Chunks", path: "/faq-chunks" },
   { icon: Settings, label: "Prompt Editor", path: "/prompt-editor" },
+  { icon: Bot, label: "LLM", path: "/llm-settings" },
   { icon: MessageSquare, label: "Test Panel", path: "/test-panel" },
   { icon: BarChart3, label: "Statistics", path: "/statistics" },
   { icon: Users, label: "Users", path: "/users" },

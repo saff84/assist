@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { execFileSync } from "child_process";
 import { createRequire } from "module";
 import type { TextItem } from "pdfjs-dist/types/src/display/api";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
@@ -13,6 +14,11 @@ const moduleRequire = createRequire(import.meta.url);
 const PDFJS_BASE_PATH = path.dirname(moduleRequire.resolve("pdfjs-dist/package.json"));
 const CMAP_PATH = path.join(PDFJS_BASE_PATH, "cmaps") + "/";
 const STANDARD_FONT_PATH = path.join(PDFJS_BASE_PATH, "standard_fonts") + "/";
+const TABLE_EXTRACTOR_SCRIPT_PATH = path.join(
+  process.cwd(),
+  "scripts",
+  "extract_tables.py"
+);
 
 type NormalizedBBox = { x: number; y: number; width: number; height: number };
 
@@ -44,6 +50,18 @@ type SearchMetadata = {
   slug: string | null;
   tokens: string[];
 };
+
+type ExternalExtractedTable = {
+  page: number;
+  columns: string[];
+  rows: Array<Record<string, string | number | null>>;
+  source: string;
+  score: number;
+  preview?: string;
+  bbox?: { x: number; y: number; width: number; height: number };
+};
+
+const externalTableCache = new Map<string, ExternalExtractedTable[] | null>();
 
 const CLEAN_TOKEN_REGEX = /[^0-9a-zа-яё]+/giu;
 
@@ -93,6 +111,151 @@ function buildVariantMetadata(value?: string | null): SearchMetadata | null {
   };
 }
 
+function normalizeMatchTokens(value: string): string[] {
+  return value
+    .toLowerCase()
+    .replace(/[^0-9a-zа-яё]+/gi, " ")
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 3);
+}
+
+function tableTextFingerprint(table: ExternalExtractedTable): string {
+  const rows = table.rows
+    .slice(0, 8)
+    .map((r) => table.columns.map((c) => String(r[c] ?? "")).join(" "))
+    .join(" ");
+  return `${table.columns.join(" ")} ${rows}`.trim();
+}
+
+function bboxOverlapScore(
+  a: { x: number; y: number; width: number; height: number },
+  b?: { x: number; y: number; width: number; height: number }
+): number {
+  if (!b) return 0;
+  const x1 = Math.max(a.x, b.x);
+  const y1 = Math.max(a.y, b.y);
+  const x2 = Math.min(a.x + a.width, b.x + b.width);
+  const y2 = Math.min(a.y + a.height, b.y + b.height);
+  const iw = Math.max(0, x2 - x1);
+  const ih = Math.max(0, y2 - y1);
+  const inter = iw * ih;
+  if (inter <= 0) return 0;
+  const areaA = Math.max(1e-6, a.width * a.height);
+  return inter / areaA;
+}
+
+function loadExternalTablesForPage(
+  filePath: string,
+  pageNumber: number
+): ExternalExtractedTable[] | null {
+  if (!fs.existsSync(TABLE_EXTRACTOR_SCRIPT_PATH)) {
+    return null;
+  }
+
+  const cacheKey = `${filePath}::${pageNumber}`;
+  if (externalTableCache.has(cacheKey)) {
+    return externalTableCache.get(cacheKey) ?? null;
+  }
+
+  const pythonCandidates = [
+    process.env.TABLE_EXTRACTOR_PYTHON?.trim(),
+    "python",
+    "python3",
+  ].filter((v): v is string => Boolean(v));
+
+  for (const pythonCmd of pythonCandidates) {
+    try {
+      const stdout = execFileSync(
+        pythonCmd,
+        [TABLE_EXTRACTOR_SCRIPT_PATH, "--file", filePath, "--page", String(pageNumber)],
+        {
+          encoding: "utf-8",
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 20000,
+          maxBuffer: 4 * 1024 * 1024,
+        }
+      );
+
+      const parsed = JSON.parse(stdout);
+      if (!parsed || parsed.ok === false) {
+        externalTableCache.set(cacheKey, []);
+        return [];
+      }
+
+      const tablesRaw = Array.isArray(parsed.tables) ? parsed.tables : [];
+      const tables: ExternalExtractedTable[] = tablesRaw
+        .map((table: any) => ({
+          page: Number(table.page || pageNumber),
+          columns: Array.isArray(table.columns)
+            ? table.columns.map((c: any) => String(c))
+            : [],
+          rows: Array.isArray(table.rows) ? table.rows : [],
+          source: String(table.source || "unknown"),
+          score: Number(table.score || 0),
+          preview: typeof table.preview === "string" ? table.preview : undefined,
+          bbox:
+            table.bbox &&
+            typeof table.bbox.x === "number" &&
+            typeof table.bbox.y === "number" &&
+            typeof table.bbox.width === "number" &&
+            typeof table.bbox.height === "number"
+              ? {
+                  x: table.bbox.x,
+                  y: table.bbox.y,
+                  width: table.bbox.width,
+                  height: table.bbox.height,
+                }
+              : undefined,
+        }))
+        .filter((t) => t.columns.length >= 2 && t.rows.length > 0);
+
+      externalTableCache.set(cacheKey, tables);
+      return tables;
+    } catch {
+      // Try next python executable candidate.
+    }
+  }
+
+  externalTableCache.set(cacheKey, null);
+  return null;
+}
+
+function pickExternalTableForRegion(
+  filePath: string | undefined,
+  pageNumber: number,
+  normalizedBBox: NormalizedBBox,
+  regionText: string,
+  regionType?: ManualRegion["regionType"]
+): ExternalExtractedTable | null {
+  if (!filePath) return null;
+  const tables = loadExternalTablesForPage(filePath, pageNumber);
+  if (!tables || tables.length === 0) return null;
+
+  const regionTokens = new Set(normalizeMatchTokens(regionText));
+  const isTechnicalTable = regionType === "technical_table";
+  const ranked = tables
+    .map((table) => {
+      const tableTokens = normalizeMatchTokens(tableTextFingerprint(table));
+      const overlap = tableTokens.reduce(
+        (acc, token) => acc + (regionTokens.has(token) ? 1 : 0),
+        0
+      );
+      const tokenScore = overlap / Math.max(regionTokens.size, 1);
+      const geoScore = bboxOverlapScore(normalizedBBox, table.bbox);
+      const baseScore = isTechnicalTable
+        ? (table.score || 0) + geoScore * 3 + tokenScore * 0.2
+        : (table.score || 0) + tokenScore + geoScore * 2;
+      const hasTechHeaders = table.columns.some((c) => /характерист|ед\.?\s*изм|значен/i.test(c));
+      const score = isTechnicalTable && !hasTechHeaders ? baseScore - 0.8 : baseScore;
+      return { table, score };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  const best = ranked[0];
+  return best && best.score >= (isTechnicalTable ? 0.35 : 0.25) ? best.table : null;
+}
+
 function buildGroupMetadata(value?: string | null): SearchMetadata | null {
   if (!value) return null;
   const original = value.trim();
@@ -138,7 +301,7 @@ function mapRegionTypeToElement(regionType: ManualRegion["regionType"]): "text" 
   if (regionType === "faq_question" || regionType === "faq_answer" || regionType === "certificate_answer") {
     return "text";
   }
-  if (regionType === "table_with_articles") {
+  if (regionType === "table_with_articles" || regionType === "technical_table") {
     return "table";
   }
   return regionType;
@@ -150,7 +313,9 @@ function determineElementTypeFromRegions(
   if (
     regions.some(
       (region) =>
-        region.regionType === "table" || region.regionType === "table_with_articles"
+        region.regionType === "table" ||
+        region.regionType === "technical_table" ||
+        region.regionType === "table_with_articles"
     )
   ) {
     return "table";
@@ -518,10 +683,18 @@ function pruneTableColumns(headers: string[], rows: string[][]) {
     const nonEmptyCells = rows.filter(
       (row) => (row[idx] ?? "").trim().length > 0
     ).length;
+    const hasAlphaChars = /[A-Za-zА-Яа-яЁё]/.test(headerNormalized);
+    const isNumericOnly = /^\d+$/.test(headerNormalized);
+    const isVeryShortNonAlpha =
+      headerNormalized.length > 0 &&
+      headerNormalized.length <= 2 &&
+      !hasAlphaChars;
     const isPlaceholder =
       headerNormalized.length === 0 ||
       /^колон/iu.test(headerNormalized) ||
-      /^column/i.test(headerNormalized);
+      /^column/i.test(headerNormalized) ||
+      isNumericOnly ||
+      isVeryShortNonAlpha;
 
     if (!isPlaceholder || nonEmptyCells > 1) {
       keepIndexes.push(idx);
@@ -570,6 +743,117 @@ interface TableStructure {
   rows: string[][];
 }
 
+function looksLikeTechnicalTableText(text: string): boolean {
+  const t = text.toLowerCase();
+  const markers = [
+    /характерист/i,
+    /ед\.?\s*изм|единиц/i,
+    /значени/i,
+    /рабочее давление|испытательное давление|температур/i,
+  ];
+  return markers.filter((r) => r.test(t)).length >= 2;
+}
+
+function looksLikeArticlesTableText(text: string): boolean {
+  const t = text.toLowerCase();
+  return /артикул|номенклатур/i.test(t) && /диаметр|толщин|длина/i.test(t);
+}
+
+function parseTechnicalTableFromPlainText(plainText: string): TableStructure | null {
+  const normalizedText = plainText
+    .replace(/г\/см\s*3/gi, "г/см3")
+    .replace(/г\/м\s*3\s*·?\s*сут/gi, "г/м3·сут");
+  const lines = normalizedText
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 3) return null;
+
+  const rows: string[][] = [];
+  const unitMatchers: Array<{ regex: RegExp; normalized?: string }> = [
+    { regex: /г\/м3·сут/gi, normalized: "г/м3·сут" },
+    { regex: /г\/см(?:3|³)/gi, normalized: "г/см3" },
+    { regex: /кдж\/кг·к/gi, normalized: "кДж/кг·К" },
+    { regex: /1\/к°/gi, normalized: "1/К°" },
+    { regex: /×\s*dнар/gi, normalized: "× Dнар" },
+    { regex: /мпа/gi, normalized: "МПа" },
+    { regex: /бар/gi, normalized: "бар" },
+    { regex: /°c/gi, normalized: "°C" },
+    { regex: /лет/gi, normalized: "лет" },
+    { regex: /мм/gi, normalized: "мм" },
+    { regex: /%/g, normalized: "%" },
+  ];
+
+  const looksLikeValue = (value: string) =>
+    /[0-9]/.test(value) || /^pe-?xa$/i.test(value.trim()) || /^[<>]\s*\d/.test(value.trim());
+
+  for (const raw of lines) {
+    if (/^техническ/i.test(raw)) continue;
+    if (/^характеристик/i.test(raw)) continue;
+    if (/^(артикул|номенклатур|размер)/i.test(raw)) continue;
+
+    const normalized = raw.replace(/\s+/g, " ").trim();
+    if (!normalized) continue;
+
+    const dashed = normalized.match(/^(.+?)\s+[–-]\s+([A-Za-zА-Яа-яЁё].+)$/);
+    if (dashed) {
+      const characteristic = dashed[1].trim();
+      const value = dashed[2].trim();
+      if (characteristic && value) {
+        rows.push([characteristic, "", value]);
+      }
+      continue;
+    }
+
+    let bestSplit: { characteristic: string; unit: string; value: string; score: number } | null = null;
+    for (const matcher of unitMatchers) {
+      const matches = Array.from(normalized.matchAll(matcher.regex));
+      for (const m of matches) {
+        const start = m.index ?? -1;
+        if (start < 0) continue;
+        const unitRaw = m[0] ?? "";
+        const characteristic = normalized.slice(0, start).trim();
+        const value = normalized.slice(start + unitRaw.length).trim();
+        if (!characteristic || !value || !looksLikeValue(value)) continue;
+        const unit = matcher.normalized ?? unitRaw;
+        const valueTokens = value.split(/\s+/).filter(Boolean);
+        const valueHasLetters = /[A-Za-zА-Яа-яЁё]/.test(value) && !/^pe-?xa$/i.test(value);
+        let score = 0;
+        if (/^[<>≈~]?\s*\d/.test(value) || /^pe-?xa$/i.test(value)) score += 6;
+        if (!valueHasLetters) score += 4;
+        if (valueTokens.length <= 3) score += 3;
+        if (/^\)/.test(value)) score -= 8;
+        if (/мпа/i.test(unit)) score += 4;
+        if (/°c/i.test(unit)) score += 1;
+        if (/мм|бар|лет|%|кдж|г\/м3|г\/см3|1\/к/i.test(unit)) score += 2;
+        if (!bestSplit || score > bestSplit.score) {
+          bestSplit = { characteristic, unit, value, score };
+        }
+      }
+    }
+
+    if (bestSplit) {
+      rows.push([bestSplit.characteristic, bestSplit.unit, bestSplit.value]);
+      continue;
+    }
+
+    const fallback = normalized.match(/^(.+?)\s+([<>]?\s*[\d,.\-–]+(?:\s*[×x*]\s*10\s*-?\d+)?)$/);
+    if (fallback) {
+      const characteristic = fallback[1].trim();
+      const value = fallback[2].trim();
+      if (characteristic && value) {
+        rows.push([characteristic, "", value]);
+      }
+    }
+  }
+
+  if (rows.length < 3) return null;
+  return {
+    headers: ["Характеристика", "Ед. изм", "Значение"],
+    rows,
+  };
+}
+
 type ManualItemGroup = {
   groupId: number;
   groupName: string;
@@ -581,7 +865,8 @@ async function extractTextForRegion(
   page: pdfjsLib.PDFPageProxy,
   viewport: pdfjsLib.PageViewport,
   region: ManualRegion,
-  normalizedBBox: NormalizedBBox
+  normalizedBBox: NormalizedBBox,
+  pdfPath?: string
 ): Promise<ExtractedRegionContent> {
   const textContent = await page.getTextContent();
   const tolerance = POSITION_TOLERANCE;
@@ -625,19 +910,87 @@ async function extractTextForRegion(
   let tableJson: Array<Record<string, string>> | null = null;
   const isTableRegion =
     region.regionType === "table" ||
+    region.regionType === "technical_table" ||
     region.regionType === "table_with_articles" ||
     region.isNomenclatureTable;
 
   if (isTableRegion) {
-    const rows = buildTableRowsFromItems(filtered, viewport.width, viewport.height);
-    if (rows && rows.length) {
-      tableMatrix = rows;
-      tableStructure = deriveTableStructure(rows);
-      // Important: when we derived headers, we must use ONLY body rows for JSON.
-      // Otherwise header/title rows end up in data and the table looks "shifted".
-      const rowsForJson = tableStructure?.rows ?? rows;
-      const headersForJson = tableStructure?.headers;
-      tableJson = convertTableRowsToRecords(rowsForJson, headersForJson);
+    const inferredTechnical =
+      region.regionType === "technical_table" ||
+      (region.regionType === "table" && looksLikeTechnicalTableText(plainText));
+    const inferredArticles =
+      region.regionType === "table_with_articles" ||
+      region.isNomenclatureTable ||
+      (region.regionType === "table" && looksLikeArticlesTableText(plainText));
+    const extractionTypeHint: ManualRegion["regionType"] = inferredTechnical
+      ? "technical_table"
+      : inferredArticles
+        ? "table_with_articles"
+        : region.regionType;
+
+    if (inferredTechnical) {
+      const parsedTech = parseTechnicalTableFromPlainText(plainText);
+      if (parsedTech && parsedTech.rows.length >= 6) {
+        tableStructure = parsedTech;
+        tableJson = parsedTech.rows.map((row) => ({
+          [parsedTech.headers[0]]: row[0] ?? "",
+          [parsedTech.headers[1]]: row[1] ?? "",
+          [parsedTech.headers[2]]: row[2] ?? "",
+        }));
+      }
+    }
+
+    const externalTable = pickExternalTableForRegion(
+      pdfPath,
+      region.pageNumber,
+      normalizedBBox,
+      plainText,
+      extractionTypeHint
+    );
+    if (externalTable) {
+      const headers = externalTable.columns.map((h) => h.trim()).filter(Boolean);
+      if (headers.length) {
+        const rows = externalTable.rows.map((record) =>
+          headers.map((h) => String(record[h] ?? "").trim())
+        );
+        tableStructure = { headers, rows };
+        tableJson = rows.map((row) => {
+          const out: Record<string, string> = {};
+          headers.forEach((h, idx) => {
+            out[h] = row[idx] ?? "";
+          });
+          return out;
+        });
+      }
+    }
+
+    if (!tableJson || tableJson.length === 0) {
+      const rows = buildTableRowsFromItems(filtered, viewport.width, viewport.height);
+      if (rows && rows.length) {
+        tableMatrix = rows;
+        tableStructure = deriveTableStructure(rows);
+        // Important: when we derived headers, we must use ONLY body rows for JSON.
+        // Otherwise header/title rows end up in data and the table looks "shifted".
+        const rowsForJson = tableStructure?.rows ?? rows;
+        const headersForJson = tableStructure?.headers;
+        tableJson = convertTableRowsToRecords(rowsForJson, headersForJson);
+      }
+    }
+
+    // Last-resort fallback for technical tables: build 3-column rows from plain text lines.
+    if (
+      (!tableJson || tableJson.length === 0) &&
+      inferredTechnical
+    ) {
+      const parsedTech = parseTechnicalTableFromPlainText(plainText);
+      if (parsedTech && parsedTech.rows.length) {
+        tableStructure = parsedTech;
+        tableJson = parsedTech.rows.map((row) => ({
+          [parsedTech.headers[0]]: row[0] ?? "",
+          [parsedTech.headers[1]]: row[1] ?? "",
+          [parsedTech.headers[2]]: row[2] ?? "",
+        }));
+      }
     }
   }
 
@@ -717,7 +1070,8 @@ export async function generateChunksFromManualRegions(
         page,
         viewport,
         region,
-        normalizedBBox
+        normalizedBBox,
+        pdfPath
       );
 
       const extractedText = extracted.text;
@@ -807,8 +1161,12 @@ export async function generateChunksFromManualRegions(
     for (const chunk of chunkRecords) {
       const rawType = (chunk.chunkMetadata as any)?.annotationType as string | undefined;
       const annotationType =
-        rawType === "table" || rawType === "table_with_articles" || rawType === "figure" || rawType === "list"
-          ? (rawType as "table" | "table_with_articles" | "figure" | "list")
+        rawType === "table" ||
+        rawType === "technical_table" ||
+        rawType === "table_with_articles" ||
+        rawType === "figure" ||
+        rawType === "list"
+          ? (rawType as "table" | "technical_table" | "table_with_articles" | "figure" | "list")
           : "text";
       const rawNotes = (chunk.chunkMetadata as any)?.notes as string | null | undefined;
       await documentDb.upsertChunkAnnotation({
@@ -969,7 +1327,8 @@ export async function generateChunksFromManualProductItems(
         page,
         viewport,
         region,
-        normalizedBBox
+        normalizedBBox,
+        pdfPath
       );
       const extractedText = extracted.text;
       if (!extractedText) {
@@ -1219,7 +1578,13 @@ export async function generateWarrantyFaqChunksFromManualRegions(
         viewportCache.set(region.pageNumber, viewport);
       }
 
-      const extracted = await extractTextForRegion(page, viewport, region, normalizedBBox);
+      const extracted = await extractTextForRegion(
+        page,
+        viewport,
+        region,
+        normalizedBBox,
+        pdfPath
+      );
       const extractedText = extracted.text;
       if (!extractedText) {
         warnings.push(
@@ -1439,7 +1804,8 @@ const regionTexts: Array<{
       page,
       viewport,
       region,
-      normalizedBBox
+      normalizedBBox,
+      pdfPath
     );
 
     const extractedText = extracted.text;

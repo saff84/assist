@@ -14,6 +14,7 @@ import TestPanelPage from "./pages/TestPanelPage";
 import StatisticsPage from "./pages/StatisticsPage";
 import UsersPage from "./pages/UsersPage";
 import FaqChunksPage from "./pages/FaqChunksPage";
+import LlmSettingsPage from "./pages/LlmSettingsPage";
 import DashboardLayout from "./components/DashboardLayout";
 
 function Router() {
@@ -44,6 +45,11 @@ function Router() {
       <Route path="/prompt-editor">
         <DashboardLayout>
           <PromptEditorPage />
+        </DashboardLayout>
+      </Route>
+      <Route path="/llm-settings">
+        <DashboardLayout>
+          <LlmSettingsPage />
         </DashboardLayout>
       </Route>
       <Route path="/test-panel">

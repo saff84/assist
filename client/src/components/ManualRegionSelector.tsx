@@ -46,6 +46,7 @@ interface Region {
   type:
     | "text"
     | "table"
+    | "technical_table"
     | "table_with_articles"
     | "figure"
     | "list"
@@ -101,6 +102,7 @@ export default function ManualRegionSelector({ documentId, filename, onRegionsCr
   const [regionType, setRegionType] = useState<
     | "text"
     | "table"
+    | "technical_table"
     | "table_with_articles"
     | "figure"
     | "list"
@@ -472,7 +474,9 @@ export default function ManualRegionSelector({ documentId, filename, onRegionsCr
       // Draw all regions (scale by 2 for high DPI canvas)
       regions.forEach((region, index) => {
         // Check if selected by comparing both id and reference (for new regions without id)
-        const isSelected = selectedRegion === region || (selectedRegion?.id && region.id && selectedRegion.id === region.id);
+        const isSelected =
+          selectedRegion === region ||
+          Boolean(selectedRegion?.id && region.id && selectedRegion.id === region.id);
         drawRegion(ctx, region, isSelected, getRegionColor(region.type), 2);
       });
 
@@ -625,6 +629,7 @@ export default function ManualRegionSelector({ documentId, filename, onRegionsCr
   const getRegionColor = (type: string): string => {
     switch (type) {
       case "table":
+      case "technical_table":
       case "table_with_articles":
         return "#3b82f6"; // blue
       case "figure":
@@ -646,6 +651,8 @@ export default function ManualRegionSelector({ documentId, filename, onRegionsCr
     switch (type) {
       case "table":
         return "Таблица";
+      case "technical_table":
+        return "Таблица тех. характеристик";
       case "table_with_articles":
         return "Таблица с артикулами";
       case "figure":
@@ -992,7 +999,9 @@ export default function ManualRegionSelector({ documentId, filename, onRegionsCr
           if (ctx) {
             ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
             regions.forEach((region) => {
-              const isSelected = selectedRegion === region || (selectedRegion?.id && region.id && selectedRegion.id === region.id);
+              const isSelected =
+                selectedRegion === region ||
+                Boolean(selectedRegion?.id && region.id && selectedRegion.id === region.id);
               drawRegion(ctx, region, isSelected, getRegionColor(region.type), 2); // Scale factor 2
             });
           }
@@ -1017,7 +1026,9 @@ export default function ManualRegionSelector({ documentId, filename, onRegionsCr
     // Redraw regions with new scale
     ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
     regions.forEach((region) => {
-      const isSelected = selectedRegion === region || (selectedRegion?.id && region.id && selectedRegion.id === region.id);
+      const isSelected =
+        selectedRegion === region ||
+        Boolean(selectedRegion?.id && region.id && selectedRegion.id === region.id);
       drawRegion(ctx, region, isSelected, getRegionColor(region.type), 2);
     });
   }, [scale, regions, selectedRegion, pdfDoc]);
@@ -1476,6 +1487,12 @@ export default function ManualRegionSelector({ documentId, filename, onRegionsCr
                           Таблица
                         </div>
                       </SelectItem>
+                      <SelectItem value="technical_table">
+                        <div className="flex items-center gap-2">
+                          <Table className="w-4 h-4" />
+                          Таблица тех. характеристик
+                        </div>
+                      </SelectItem>
                       <SelectItem value="table_with_articles">
                         <div className="flex items-center gap-2">
                           <Table className="w-4 h-4" />
@@ -1736,6 +1753,7 @@ export default function ManualRegionSelector({ documentId, filename, onRegionsCr
                       {!isWarrantyFaqMode && !isCertificateMode && (
                         <>
                           <SelectItem value="table">Таблица</SelectItem>
+                          <SelectItem value="technical_table">Таблица тех. характеристик</SelectItem>
                           <SelectItem value="table_with_articles">Таблица с артикулами</SelectItem>
                           <SelectItem value="figure">Рисунок</SelectItem>
                           <SelectItem value="list">Список</SelectItem>

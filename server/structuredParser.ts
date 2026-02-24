@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { execFileSync } from "child_process";
 import { createRequire } from "module";
 import XLSX from "xlsx";
 import mammoth from "mammoth";
@@ -82,6 +83,20 @@ const moduleRequire = createRequire(import.meta.url);
 const PDFJS_BASE_PATH = path.dirname(moduleRequire.resolve("pdfjs-dist/package.json"));
 const CMAP_PATH = path.join(PDFJS_BASE_PATH, "cmaps") + "/";
 const STANDARD_FONT_PATH = path.join(PDFJS_BASE_PATH, "standard_fonts") + "/";
+const TABLE_EXTRACTOR_SCRIPT_PATH = path.join(
+  process.cwd(),
+  "scripts",
+  "extract_tables.py"
+);
+
+type ExternalExtractedTable = {
+  page: number;
+  columns: string[];
+  rows: Array<Record<string, string | number | null>>;
+  source: string;
+  score: number;
+  preview?: string;
+};
 
 function sanitizeSectionTitle(title: string): string {
   const normalized = normalizeText(title);
@@ -1290,6 +1305,87 @@ function extractTableRowsFromText(text: string): Array<Record<string, string | n
   return hasStructuredData && rows.length > 0 ? rows : undefined;
 }
 
+function normalizeMatchTokens(value: string): string[] {
+  return value
+    .toLowerCase()
+    .replace(/[^0-9a-zа-яё]+/gi, " ")
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 3);
+}
+
+function tableTextFingerprint(table: ExternalExtractedTable): string {
+  const rowText = table.rows
+    .slice(0, 8)
+    .map((r) => Object.values(r).map((v) => String(v ?? "")).join(" "))
+    .join(" ");
+  return `${table.columns.join(" ")} ${rowText}`.trim();
+}
+
+function scoreTableForBlock(blockText: string, table: ExternalExtractedTable): number {
+  const blockTokens = new Set(normalizeMatchTokens(blockText));
+  if (!blockTokens.size) {
+    return table.score || 0;
+  }
+  const tableTokens = normalizeMatchTokens(tableTextFingerprint(table));
+  const overlap = tableTokens.reduce((acc, token) => acc + (blockTokens.has(token) ? 1 : 0), 0);
+  const overlapScore = overlap / Math.max(blockTokens.size, 1);
+  return overlapScore + (table.score || 0);
+}
+
+function loadExternalTablesForPage(
+  filePath: string,
+  pageNumber: number
+): ExternalExtractedTable[] | null {
+  if (!fs.existsSync(TABLE_EXTRACTOR_SCRIPT_PATH)) {
+    return null;
+  }
+
+  const pythonCandidates = [
+    process.env.TABLE_EXTRACTOR_PYTHON?.trim(),
+    "python",
+    "python3",
+  ].filter((v): v is string => Boolean(v));
+
+  for (const pythonCmd of pythonCandidates) {
+    try {
+      const stdout = execFileSync(
+        pythonCmd,
+        [TABLE_EXTRACTOR_SCRIPT_PATH, "--file", filePath, "--page", String(pageNumber)],
+        {
+          encoding: "utf-8",
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 15000,
+          maxBuffer: 4 * 1024 * 1024,
+        }
+      );
+
+      const parsed = JSON.parse(stdout);
+      if (!parsed || parsed.ok === false) {
+        return [];
+      }
+
+      const tablesRaw = Array.isArray(parsed.tables) ? parsed.tables : [];
+      const tables: ExternalExtractedTable[] = tablesRaw
+        .map((table: any) => ({
+          page: Number(table.page || pageNumber),
+          columns: Array.isArray(table.columns) ? table.columns.map((c: any) => String(c)) : [],
+          rows: Array.isArray(table.rows) ? table.rows : [],
+          source: String(table.source || "unknown"),
+          score: Number(table.score || 0),
+          preview: typeof table.preview === "string" ? table.preview : undefined,
+        }))
+        .filter((table) => table.columns.length >= 2 && table.rows.length > 0);
+
+      return tables;
+    } catch {
+      // Try next python command candidate.
+    }
+  }
+
+  return null;
+}
+
 /**
  * Extract products from table rows that contain article numbers (артикул)
  * Handles various table formats with article numbers and product names
@@ -1589,6 +1685,39 @@ export async function parsePdfDocument(filePath: string): Promise<StructuredDocu
   const sections: DocumentSection[] = [];
   const elements: StructuredElement[] = [];
   const products: StructuredProduct[] = [];
+  const externalTablesByPage = new Map<number, ExternalExtractedTable[]>();
+  let externalExtractorUnavailable = false;
+
+  const selectExternalRowsForBlock = (
+    pageNumber: number,
+    blockText: string
+  ): Array<Record<string, string | number | null>> | undefined => {
+    if (externalExtractorUnavailable) return undefined;
+
+    let pageTables = externalTablesByPage.get(pageNumber);
+    if (!pageTables) {
+      const loaded = loadExternalTablesForPage(filePath, pageNumber);
+      if (loaded === null) {
+        externalExtractorUnavailable = true;
+        return undefined;
+      }
+      pageTables = loaded;
+      externalTablesByPage.set(pageNumber, pageTables);
+    }
+
+    if (!pageTables.length) return undefined;
+
+    const ranked = [...pageTables]
+      .map((table) => ({
+        table,
+        score: scoreTableForBlock(blockText, table),
+      }))
+      .sort((a, b) => b.score - a.score);
+
+    const best = ranked[0]?.table;
+    if (!best || !best.rows.length) return undefined;
+    return best.rows;
+  };
 
   // ✅ Извлекаем header'ы всех страниц
   const pageHeaders = new Map<number, PageHeader>();
@@ -1955,7 +2084,9 @@ export async function parsePdfDocument(filePath: string): Promise<StructuredDocu
       // Try to extract table rows from text if it's detected as a table
       let tableRows: Array<Record<string, string | number | null>> | undefined = undefined;
       if (elementType === "table") {
-        tableRows = extractTableRowsFromText(content);
+        tableRows =
+          selectExternalRowsForBlock(pageNumber, content) ??
+          extractTableRowsFromText(content);
         // Debug logging for catalog documents
         if (tableRows && tableRows.length > 0) {
           console.log(`[StructuredParser] Extracted ${tableRows.length} table rows from page ${pageNumber}, section ${blockSectionPath}`);

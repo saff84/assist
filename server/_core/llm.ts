@@ -1,4 +1,5 @@
 import { ENV } from "./env";
+import { getLlmSettingsForInvoke } from "../llmSettingsDb";
 
 export type Role = "system" | "user" | "assistant" | "tool" | "function";
 
@@ -215,26 +216,18 @@ const normalizeToolChoice = (
   return toolChoice;
 };
 
-const resolveApiUrl = () => {
-  // Use Ollama if configured, otherwise use Forge API
+const resolveLocalApiUrl = () => {
   if (ENV.ollamaBaseUrl) {
     return `${ENV.ollamaBaseUrl.replace(/\/$/, "")}/v1/chat/completions`;
   }
-  
   return ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0
     ? `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/chat/completions`
     : "https://forge.manus.im/v1/chat/completions";
 };
 
-const assertApiKey = () => {
-  // Allow Ollama without API key
-  if (ENV.ollamaBaseUrl) {
-    return; // Ollama doesn't require API key
-  }
-  
-  if (!ENV.forgeApiKey) {
-    throw new Error("OPENAI_API_KEY is not configured");
-  }
+const resolveExternalApiUrl = (baseUrl: string) => {
+  const u = baseUrl.replace(/\/$/, "");
+  return u.includes("/v1/chat") ? u : `${u}/v1/chat/completions`;
 };
 
 const normalizeResponseFormat = ({
@@ -283,7 +276,38 @@ const normalizeResponseFormat = ({
 };
 
 export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
-  assertApiKey();
+  const settings = await getLlmSettingsForInvoke();
+
+  let apiUrl: string;
+  let apiKey: string | null = null;
+  let model: string;
+  let useThinking = false;
+
+  if (settings.provider === "external" && settings.externalApiKey) {
+    apiUrl = resolveExternalApiUrl(settings.externalApiUrl);
+    apiKey = settings.externalApiKey;
+    model =
+      params.model ||
+      settings.externalModel ||
+      process.env.LLM_MODEL_GENERATION ||
+      "anthropic/claude-sonnet-4";
+  } else {
+    apiUrl = resolveLocalApiUrl();
+    if (ENV.ollamaBaseUrl) {
+      apiKey = null;
+    } else {
+      apiKey = ENV.forgeApiKey || null;
+      if (!apiKey) {
+        throw new Error("OPENAI_API_KEY is not configured. Use LLM Settings to configure external provider or set BUILT_IN_FORGE_API_KEY.");
+      }
+      useThinking = true;
+    }
+    model =
+      params.model ||
+      ENV.ollamaModel ||
+      process.env.LLM_MODEL_GENERATION ||
+      "mistral";
+  }
 
   const {
     messages,
@@ -295,12 +319,6 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     responseFormat,
     response_format,
   } = params;
-
-  const model =
-    params.model ||
-    ENV.ollamaModel ||
-    process.env.LLM_MODEL_GENERATION ||
-    "mistral";
 
   const payload: Record<string, unknown> = {
     model,
@@ -319,7 +337,6 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     payload.tool_choice = normalizedToolChoice;
   }
 
-  // Set max_tokens (not supported by all Ollama models, but doesn't hurt)
   const maxTokens = params.maxTokens || params.max_tokens || 4096;
   payload.max_tokens = maxTokens;
 
@@ -347,11 +364,8 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     payload.repeat_penalty = repeatPenalty;
   }
 
-  // Only add Gemini-specific parameters if using Forge API
-  if (ENV.forgeApiKey && !ENV.ollamaBaseUrl) {
-    payload.thinking = {
-      "budget_tokens": 128
-    };
+  if (useThinking) {
+    payload.thinking = { "budget_tokens": 128 };
   }
 
   const normalizedResponseFormat = normalizeResponseFormat({
@@ -369,13 +383,11 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     "content-type": "application/json; charset=utf-8",
     "accept": "application/json; charset=utf-8",
   };
-  
-  // Add authorization only if using Forge API (not Ollama)
-  if (ENV.forgeApiKey) {
-    headers.authorization = `Bearer ${ENV.forgeApiKey}`;
+  if (apiKey) {
+    headers.authorization = `Bearer ${apiKey}`;
   }
 
-  const response = await fetch(resolveApiUrl(), {
+  const response = await fetch(apiUrl, {
     method: "POST",
     headers,
     body: JSON.stringify(payload),

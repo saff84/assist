@@ -222,7 +222,7 @@ export async function initializeDatabase() {
         id INT AUTO_INCREMENT PRIMARY KEY,
         documentId INT NOT NULL,
         chunkIndex INT NOT NULL,
-        annotationType ENUM('table','table_with_articles','text','figure','list','manual_region_group') NOT NULL,
+        annotationType ENUM('table','technical_table','table_with_articles','text','figure','list','manual_region_group') NOT NULL,
         isNomenclatureTable BOOLEAN NOT NULL DEFAULT FALSE,
         productGroupId INT,
         notes TEXT,
@@ -239,7 +239,7 @@ export async function initializeDatabase() {
         id INT AUTO_INCREMENT PRIMARY KEY,
         documentId INT NOT NULL,
         pageNumber INT NOT NULL,
-        regionType ENUM('text','table','table_with_articles','figure','list','faq_question','faq_answer','certificate_answer') NOT NULL,
+        regionType ENUM('text','table','technical_table','table_with_articles','figure','list','faq_question','faq_answer','certificate_answer') NOT NULL,
         coordinates JSON NOT NULL,
         extractedText TEXT,
         isNomenclatureTable BOOLEAN NOT NULL DEFAULT FALSE,
@@ -315,6 +315,16 @@ export async function initializeDatabase() {
         INDEX date_idx (date)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `,
+      `
+      CREATE TABLE IF NOT EXISTS llm_settings (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        provider ENUM('local','external') NOT NULL DEFAULT 'local',
+        externalApiUrl VARCHAR(512) DEFAULT 'https://openrouter.ai/api/v1',
+        externalApiKey TEXT,
+        externalModel VARCHAR(128) DEFAULT 'anthropic/claude-sonnet-4',
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `,
     ];
 
     for (const statement of createStatements) {
@@ -357,7 +367,7 @@ export async function initializeDatabase() {
       `ALTER TABLE chat_history ADD COLUMN diagnostics JSON;`,
       `ALTER TABLE products ADD COLUMN attributes JSON;`,
       `ALTER TABLE products ADD COLUMN pageNumber INT;`,
-      `ALTER TABLE manual_regions MODIFY COLUMN regionType ENUM('text','table','table_with_articles','figure','list','faq_question','faq_answer','certificate_answer') NOT NULL;`,
+      `ALTER TABLE manual_regions MODIFY COLUMN regionType ENUM('text','table','technical_table','table_with_articles','figure','list','faq_question','faq_answer','certificate_answer') NOT NULL;`,
       `ALTER TABLE manual_regions ADD COLUMN isNomenclatureTable BOOLEAN NOT NULL DEFAULT FALSE;`,
       `ALTER TABLE manual_regions ADD COLUMN productGroupId INT;`,
       `ALTER TABLE manual_regions ADD COLUMN productItemId INT;`,
@@ -381,7 +391,7 @@ export async function initializeDatabase() {
       `ALTER TABLE faq_entries ADD COLUMN createdBy INT NOT NULL;`,
       `ALTER TABLE faq_entries ADD COLUMN createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;`,
       `ALTER TABLE faq_entries ADD COLUMN updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;`,
-      `ALTER TABLE document_annotations MODIFY COLUMN annotationType ENUM('table','table_with_articles','text','figure','list','manual_region_group') NOT NULL;`,
+      `ALTER TABLE document_annotations MODIFY COLUMN annotationType ENUM('table','technical_table','table_with_articles','text','figure','list','manual_region_group') NOT NULL;`,
       `ALTER TABLE document_annotations ADD COLUMN isNomenclatureTable BOOLEAN NOT NULL DEFAULT FALSE;`,
       `ALTER TABLE document_annotations ADD COLUMN productGroupId INT;`,
       `ALTER TABLE document_annotations ADD COLUMN notes TEXT;`,
@@ -471,6 +481,15 @@ export async function initializeDatabase() {
       console.log("[DB Init] ✅ Default system prompt created!");
     } else {
       console.log("[DB Init] System prompt already exists");
+    }
+
+    // Seed default LLM settings if none exist
+    const [llmRows] = await connection.execute("SELECT id FROM llm_settings LIMIT 1");
+    if (Array.isArray(llmRows) && llmRows.length === 0) {
+      await connection.execute(
+        `INSERT INTO llm_settings (provider, externalApiUrl, externalModel) VALUES ('local', 'https://openrouter.ai/api/v1', 'anthropic/claude-sonnet-4')`
+      );
+      console.log("[DB Init] ✅ Default LLM settings created (local provider)");
     }
 
     await connection.end();

@@ -26,7 +26,9 @@ export default function DocumentAnnotationPage() {
 
   const [annotationMode, setAnnotationMode] = useState<"chunks" | "manual">("manual");
   const [selectedChunkIndex, setSelectedChunkIndex] = useState<number | null>(null);
-  const [annotationType, setAnnotationType] = useState<"table" | "table_with_articles" | "text" | "figure" | "list">("text");
+  const [annotationType, setAnnotationType] = useState<
+    "table" | "technical_table" | "table_with_articles" | "text" | "figure" | "list"
+  >("text");
   const [isNomenclatureTable, setIsNomenclatureTable] = useState(false);
   const [productGroupId, setProductGroupId] = useState<number | null>(null);
   const [notes, setNotes] = useState("");
@@ -177,6 +179,7 @@ export default function DocumentAnnotationPage() {
   const getAnnotationTypeIcon = (type: string) => {
     switch (type) {
       case "table":
+      case "technical_table":
       case "table_with_articles":
         return <Table className="w-4 h-4" />;
       case "figure":
@@ -190,7 +193,7 @@ export default function DocumentAnnotationPage() {
 
   const getAnnotationTypeColor = (type: string, isNomenclature: boolean) => {
     if (isNomenclature) return "bg-green-500";
-    if (type === "table" || type === "table_with_articles") return "bg-blue-500";
+    if (type === "table" || type === "technical_table" || type === "table_with_articles") return "bg-blue-500";
     if (type === "figure") return "bg-purple-500";
     if (type === "list") return "bg-orange-500";
     return "bg-gray-500";
@@ -445,6 +448,8 @@ export default function DocumentAnnotationPage() {
                                       <span className="ml-1">
                                         {chunk.annotation!.annotationType === "table_with_articles"
                                           ? "Таблица с артикулами"
+                                          : chunk.annotation!.annotationType === "technical_table"
+                                          ? "Таблица тех. характеристик"
                                           : chunk.annotation!.annotationType === "table"
                                           ? "Таблица"
                                           : chunk.annotation!.annotationType === "figure"
@@ -549,6 +554,13 @@ export default function DocumentAnnotationPage() {
                         </Label>
                       </div>
                       <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="technical_table" id="technical_table" />
+                        <Label htmlFor="technical_table" className="cursor-pointer flex items-center gap-2">
+                          <Table className="w-4 h-4" />
+                          Таблица тех. характеристик
+                        </Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
                         <RadioGroupItem value="table_with_articles" id="table_with_articles" />
                         <Label htmlFor="table_with_articles" className="cursor-pointer flex items-center gap-2">
                           <Table className="w-4 h-4" />
@@ -573,7 +585,9 @@ export default function DocumentAnnotationPage() {
                   </div>
 
                   {/* Nomenclature Table Checkbox */}
-                  {(annotationType === "table" || annotationType === "table_with_articles") && (
+                  {(annotationType === "table" ||
+                    annotationType === "technical_table" ||
+                    annotationType === "table_with_articles") && (
                     <>
                       <div className="flex items-center space-x-2">
                         <Checkbox
@@ -869,6 +883,7 @@ function DocumentVisualization({
                                 <Tag className="w-2.5 h-2.5 text-green-600" />
                               )}
                               {chunk.annotation!.annotationType === "table" ||
+                              chunk.annotation!.annotationType === "technical_table" ||
                               chunk.annotation!.annotationType === "table_with_articles" ? (
                                 <Table className="w-2.5 h-2.5 text-blue-600" />
                               ) : chunk.annotation!.annotationType === "figure" ? (

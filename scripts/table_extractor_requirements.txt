@@ -1,0 +1,7 @@
+paddleocr
+paddlepaddle
+pymupdf
+pandas
+beautifulsoup4
+lxml
+rapidfuzz

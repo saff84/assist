@@ -731,7 +731,7 @@ export const documentRouter = router({
       z.object({
         documentId: z.number(),
         chunkIndex: z.number(),
-        annotationType: z.enum(["table", "table_with_articles", "text", "figure", "list"]),
+        annotationType: z.enum(["table", "technical_table", "table_with_articles", "text", "figure", "list"]),
         isNomenclatureTable: z.boolean().default(false),
         productGroupId: z.number().optional().nullable(),
         notes: z.string().optional(),
@@ -1205,6 +1205,7 @@ export const documentRouter = router({
         regionType: z.enum([
           "text",
           "table",
+          "technical_table",
           "table_with_articles",
           "figure",
           "list",
@@ -1303,6 +1304,7 @@ export const documentRouter = router({
           .enum([
             "text",
             "table",
+            "technical_table",
             "table_with_articles",
             "figure",
             "list",

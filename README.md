@@ -19,6 +19,13 @@ AI Knowledge Assistant — это полнофункциональное RAG‑�
 - Docker + Docker Compose (v2).
 - Git LFS не требуется, но репозиторий содержит крупные PDF, поэтому убедитесь в достаточном дисковом пространстве.
 
+### Опционально: улучшенное извлечение таблиц PDF
+Для pipeline `PaddleOCR PP-Structure + rapidfuzz`:
+```bash
+python -m pip install -r scripts/table_extractor_requirements.txt
+```
+Если Python не в PATH, задайте `TABLE_EXTRACTOR_PYTHON` в `.env`.
+
 ## Структура репозитория
 ```
 client/            # Vite + React frontend (src/components, pages, hooks, UI kit)

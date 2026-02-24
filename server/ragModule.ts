@@ -1255,28 +1255,66 @@ function tableRowsToMarkdown(
   preferredLabel?: string | null
 ): TableRenderSection | null {
   if (!rows.length) return null;
-  const columns: string[] = [];
+  const normalizeCell = (value: unknown): string => {
+    if (value === null || value === undefined) return "";
+    return String(value)
+      .replace(/\r\n/g, "\n")
+      .replace(/\n+/g, " / ")
+      .replace(/[ \t]+/g, " ")
+      .replace(/\|/g, "\\|")
+      .trim();
+  };
+
+  const rawColumns: string[] = [];
   rows.forEach((row) => {
     Object.keys(row || {}).forEach((key) => {
-      if (key && !columns.includes(key)) {
-        columns.push(key);
+      if (key && !rawColumns.includes(key)) {
+        rawColumns.push(key);
       }
     });
   });
+  const skipColumn = (k: string) => {
+    const t = k.trim();
+    if (!t) return true;
+    if (/^\d+$/.test(t)) return true;
+    if (t.length <= 2 && /^[\d\-]+$/.test(t)) return true;
+    return false;
+  };
+  const columns = rawColumns
+    .map((original) => ({
+      original,
+      display: normalizeCell(original),
+    }))
+    .filter((entry) => !skipColumn(entry.display));
   if (!columns.length) return null;
-  const header = `| ${columns.join(" | ")} |`;
-  const divider = `| ${columns.map(() => "---").join(" | ")} |`;
+  const charCol = columns.find((c) => /характеристик/i.test(c.display))?.original;
+  const valueCol = columns.find((c) => /значение/i.test(c.display))?.original;
+  const unitCol = columns.find((c) => /ед\.?\s*изм|единиц/i.test(c.display))?.original;
+  const preferredOrder = [charCol, unitCol, valueCol].filter(Boolean);
+  const ordered =
+    preferredOrder.length >= 2
+      ? [
+          ...preferredOrder,
+          ...columns
+            .map((c) => c.original)
+            .filter((c) => !preferredOrder.includes(c)),
+        ]
+      : columns.map((c) => c.original);
+  const displayByOriginal = new Map(columns.map((entry) => [entry.original, entry.display]));
+  const header = `| ${ordered.map((col) => displayByOriginal.get(col) || normalizeCell(col)).join(" | ")} |`;
+  const divider = `| ${ordered.map(() => "---").join(" | ")} |`;
   const body = rows.map((row) => {
-    const cells = columns.map((col) => {
+    const cells = ordered.map((col) => {
       const value = row?.[col];
-      if (value === null || value === undefined) return "";
-      return String(value).replace(/\|/g, "\\|").trim();
+      return normalizeCell(value);
     });
     return `| ${cells.join(" | ")} |`;
   });
 
   const label =
-    sanitizeTableLabel(preferredLabel) ?? inferTableLabel(columns) ?? undefined;
+    sanitizeTableLabel(preferredLabel) ??
+    inferTableLabel(ordered.map((col) => displayByOriginal.get(col) || col)) ??
+    undefined;
   const introLine = label
     ? `${label} (таблица)`
     : "[Таблица технических характеристик]";
@@ -1396,6 +1434,11 @@ function formatRawChunkContent(
   if (manualContent) {
     return manualContent;
   }
+  const hasStructuredTables = allowTables && (source.tables?.length ?? 0) > 0;
+  if (hasStructuredTables) {
+    const title = source.sectionTitle || source.sectionPath || "";
+    return title ? `**${title}**` : "";
+  }
 
   let content = (source.chunkContent ?? "").replace(/\r\n/g, "\n").trim();
   if (!content) return "";
@@ -1414,8 +1457,9 @@ function formatRawChunkContent(
     if (!trimmed) return;
 
     const table = allowTables
-      convertWhitespaceTableSegment(trimmed, preferTable) ||
-      convertKeyValueSegment(trimmed, preferTable);
+      ? (convertWhitespaceTableSegment(trimmed, preferTable) ||
+        convertKeyValueSegment(trimmed, preferTable))
+      : null;
     if (table) {
       formatted.push(table);
       return;
@@ -1868,6 +1912,19 @@ function queryWantsTables(query: string): boolean {
   return /таблиц|таблица|размер|диаметр|толщин|характерист|давлен|температур|номенклатур/.test(
     q
   );
+}
+
+function isTooGenericCatalogQuery(query: string): boolean {
+  const q = query.toLowerCase().trim();
+  if (!q) return false;
+  const words = q.split(/\s+/).filter(Boolean);
+  const hasGenericIntent =
+    /характерист|параметр|свойств|данн|описан|таблиц|размер/.test(q);
+  const hasSpecificSignals =
+    /артикул|sku|sanext|универсаль|stabil|hp|модель|серия|труба|фитинг|\b\d{3,}\b/.test(
+      q
+    );
+  return hasGenericIntent && !hasSpecificSignals && words.length <= 4;
 }
 
 function isObviousSingleChunkAnswer(
@@ -2501,6 +2558,20 @@ export async function processRAGQuery(
     catalog: hasCatalogIntent(ragQuery.query),
   };
 
+  // For very generic catalog queries without product context, ask a clarification
+  // before taking fast/raw single-chunk paths.
+  if (intents.catalog && isTooGenericCatalogQuery(ragQuery.query)) {
+    const clarification =
+      "Уточните, пожалуйста, о каком товаре идет речь (название или артикул). " +
+      "Например: «характеристики универсальной трубы SANEXT» или «характеристики артикула 1181».";
+    return {
+      response: clarification,
+      sources: [],
+      responseTime: Date.now() - start,
+      tokensUsed: Math.ceil(clarification.length / TOKEN_CHAR_RATIO),
+    };
+  }
+
   let typeFiltered = filtered;
   if (forcedDocType) {
     typeFiltered = filtered.filter((chunk) => chunk.docType === forcedDocType);
@@ -2710,9 +2781,39 @@ export async function processRAGQuery(
         fullContent = `${descriptorParts.join(" | ")}\n${fullContent}`;
       }
 
-      const tableData = await resolveTableData(chunk, sectionPath);
+      const isManualRegionChunk =
+        Boolean((metadata as any)?.isManualRegion) &&
+        Array.isArray((metadata as any)?.regions) &&
+        (metadata as any).regions.length > 0;
 
-      if (tableData && Array.isArray(tableData) && tableData.length > 0) {
+      if (isManualRegionChunk) {
+        const manualSource: ContextSourceEntry = {
+          documentId: chunk.documentId,
+          filename: docMeta.filename,
+          documentType: docMeta.docType,
+          sectionPath: sectionPath || undefined,
+          sectionTitle:
+            (metadata.productVariantName as string | undefined) ??
+            (metadata.section as string | undefined) ??
+            metadata.heading,
+          pageStart,
+          pageEnd,
+          chunkIndex: chunk.chunkIndex,
+          chunkContent: fullContent,
+          relevance: chunk.relevance,
+          elementType: metadata.elementType ?? (chunk as any)?.elementType ?? "text",
+          boostsApplied: chunk.boostsApplied,
+          metadata,
+        };
+        const manualContent = formatManualRegionAwareContent(manualSource, {
+          allowTables: true,
+        });
+        if (manualContent) {
+          fullContent = manualContent;
+        }
+      } else {
+        const tableData = await resolveTableData(chunk, sectionPath);
+        if (tableData && Array.isArray(tableData) && tableData.length > 0) {
         const tableLabel =
           detectTableHeading(fullContent) || detectTableHeading(chunk.content);
         const tableSection = tableRowsToMarkdown(tableData, tableLabel);
@@ -2723,8 +2824,15 @@ export async function processRAGQuery(
             headerLine: tableSection.headerLine,
             introLine: tableSection.introLine,
           });
-          fullContent = insertTableIntoContent(fullContent, tableSection);
+          const tableLikeElement =
+            (metadata.elementType ?? (chunk as any)?.elementType ?? "text") ===
+            "table";
+          // For true table chunks, replace noisy OCR/text blob with clean markdown table.
+          fullContent = tableLikeElement
+            ? `${tableSection.introLine}\n${tableSection.markdown}`.trim()
+            : insertTableIntoContent(fullContent, tableSection);
         }
+      }
       }
 
       const isCatalog = docMeta.docType === "catalog";
@@ -2820,7 +2928,7 @@ export async function processRAGQuery(
     }
   }
 
-  // Fast path for passports/certificates/FAQ: if answer is obvious, return chunk text without LLM.
+  // Fast path for passports/certificates/FAQ/catalog: if answer is obvious, return chunk text without LLM.
   const primaryDocType =
     forcedDocType ??
     (finalChunks.length > 0 &&
@@ -2831,7 +2939,12 @@ export async function processRAGQuery(
     primaryDocType === "passport" ||
     primaryDocType === "certificate" ||
     primaryDocType === "warranty_faq";
-  if (specialDoc && isObviousSingleChunkAnswer(finalChunks, config)) {
+  const catalogFastPath =
+    primaryDocType === "catalog" &&
+    isObviousSingleChunkAnswer(finalChunks, config) &&
+    !finalChunks[0]?.boostsApplied?.includes("sku_match_chunk") &&
+    !finalChunks[0]?.boostsApplied?.includes("sku_match_document");
+  if (specialDoc || catalogFastPath) {
     const allowTables = queryWantsTables(ragQuery.query);
     const topSource = fullUsedSources[0];
     if (primaryDocType === "warranty_faq" && topSource?.chunkContent) {

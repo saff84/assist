@@ -266,6 +266,7 @@ export const documentAnnotations = mysqlTable(
     chunkIndex: int("chunkIndex").notNull(), // Index of the chunk being annotated
     annotationType: mysqlEnum("annotationType", [
       "table",
+      "technical_table",
       "table_with_articles",
       "text",
       "figure",
@@ -302,6 +303,7 @@ export const manualRegions = mysqlTable(
     regionType: mysqlEnum("regionType", [
       "text",
       "table",
+      "technical_table",
       "table_with_articles",
       "figure",
       "list",
@@ -480,3 +482,23 @@ export const queryStats = mysqlTable(
 
 export type QueryStat = typeof queryStats.$inferSelect;
 export type InsertQueryStat = typeof queryStats.$inferInsert;
+
+/**
+ * LLM settings table
+ * Single-row config: local (Ollama/Forge) vs external (OpenRouter etc.)
+ */
+export const llmSettings = mysqlTable(
+  "llm_settings",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    provider: mysqlEnum("provider", ["local", "external"]).default("local").notNull(),
+    externalApiUrl: varchar("externalApiUrl", { length: 512 }).default("https://openrouter.ai/api/v1"),
+    externalApiKey: text("externalApiKey"),
+    externalModel: varchar("externalModel", { length: 128 }).default("anthropic/claude-sonnet-4"),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  () => ({})
+);
+
+export type LlmSettings = typeof llmSettings.$inferSelect;
+export type InsertLlmSettings = typeof llmSettings.$inferInsert;
