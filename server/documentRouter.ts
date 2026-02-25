@@ -13,6 +13,7 @@ import {
   generateWarrantyFaqChunksFromManualRegions,
 } from "./manualChunkGenerator";
 import { generateChunksFromManualProductItems } from "./manualChunkGenerator";
+import { getSystemPromptTemplate } from "./rag/promptLoader";
 
 /**
  * Document management and RAG tRPC router
@@ -249,7 +250,7 @@ export const documentRouter = router({
   getSystemPrompt: protectedProcedure.query(async () => {
     try {
       const prompt = await documentDb.getSystemPrompt();
-      return prompt || { prompt: "You are a helpful AI assistant." };
+      return prompt || { prompt: "" };
     } catch (error) {
       console.error("Error getting system prompt:", error);
       throw new TRPCError({
@@ -260,10 +261,25 @@ export const documentRouter = router({
   }),
 
   /**
+   * Get base prompt template from file
+   */
+  getSystemPromptTemplate: protectedProcedure.query(async () => {
+    try {
+      return { prompt: getSystemPromptTemplate() };
+    } catch (error) {
+      console.error("Error getting system prompt template:", error);
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "Failed to get system prompt template",
+      });
+    }
+  }),
+
+  /**
    * Update system prompt (admin only)
    */
   updateSystemPrompt: protectedProcedure
-    .input(z.object({ prompt: z.string().min(10) }))
+    .input(z.object({ prompt: z.string() }))
     .mutation(async ({ input, ctx }) => {
       try {
         // Only admins can update system prompt

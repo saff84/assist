@@ -52,7 +52,7 @@ COPY . .
 
 # Copy entrypoint script
 COPY docker-entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 # Verify TypeScript compilation before build (non-blocking)
 RUN echo "Checking TypeScript compilation..." && \

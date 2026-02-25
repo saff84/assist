@@ -495,6 +495,7 @@ export const llmSettings = mysqlTable(
     externalApiUrl: varchar("externalApiUrl", { length: 512 }).default("https://openrouter.ai/api/v1"),
     externalApiKey: text("externalApiKey"),
     externalModel: varchar("externalModel", { length: 128 }).default("anthropic/claude-sonnet-4"),
+    useQuickResponses: boolean("useQuickResponses").default(true).notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
   () => ({})

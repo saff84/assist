@@ -322,6 +322,7 @@ export async function initializeDatabase() {
         externalApiUrl VARCHAR(512) DEFAULT 'https://openrouter.ai/api/v1',
         externalApiKey TEXT,
         externalModel VARCHAR(128) DEFAULT 'anthropic/claude-sonnet-4',
+        useQuickResponses BOOLEAN NOT NULL DEFAULT TRUE,
         updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `,
@@ -395,6 +396,7 @@ export async function initializeDatabase() {
       `ALTER TABLE document_annotations ADD COLUMN isNomenclatureTable BOOLEAN NOT NULL DEFAULT FALSE;`,
       `ALTER TABLE document_annotations ADD COLUMN productGroupId INT;`,
       `ALTER TABLE document_annotations ADD COLUMN notes TEXT;`,
+      `ALTER TABLE llm_settings ADD COLUMN useQuickResponses BOOLEAN NOT NULL DEFAULT TRUE;`,
     ];
 
     for (const statement of alterStatements) {

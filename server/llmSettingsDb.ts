@@ -10,6 +10,7 @@ export interface LlmSettingsRow {
   externalApiUrl: string | null;
   externalApiKey: string | null;
   externalModel: string | null;
+  useQuickResponses: boolean | null;
 }
 
 export interface LlmSettingsForApi {
@@ -17,6 +18,7 @@ export interface LlmSettingsForApi {
   externalApiUrl: string;
   externalApiKeyMasked: string | null;
   externalModel: string;
+  useQuickResponses: boolean;
 }
 
 const MASK = "••••••••";
@@ -39,6 +41,7 @@ export async function getLlmSettingsForInvoke(): Promise<{
   externalApiUrl: string;
   externalApiKey: string | null;
   externalModel: string;
+  useQuickResponses: boolean;
 }> {
   const row = await getLlmSettings();
   if (!row || row.provider !== "external") {
@@ -47,6 +50,7 @@ export async function getLlmSettingsForInvoke(): Promise<{
       externalApiUrl: "https://openrouter.ai/api/v1",
       externalApiKey: null,
       externalModel: "anthropic/claude-sonnet-4",
+      useQuickResponses: row?.useQuickResponses ?? true,
     };
   }
   return {
@@ -54,6 +58,7 @@ export async function getLlmSettingsForInvoke(): Promise<{
     externalApiUrl: row.externalApiUrl?.trim() || "https://openrouter.ai/api/v1",
     externalApiKey: row.externalApiKey?.trim() || null,
     externalModel: row.externalModel?.trim() || "anthropic/claude-sonnet-4",
+    useQuickResponses: row.useQuickResponses ?? true,
   };
 }
 
@@ -65,6 +70,7 @@ export async function getLlmSettingsForApi(): Promise<LlmSettingsForApi> {
       externalApiUrl: "https://openrouter.ai/api/v1",
       externalApiKeyMasked: null,
       externalModel: "anthropic/claude-sonnet-4",
+      useQuickResponses: true,
     };
   }
   return {
@@ -72,6 +78,7 @@ export async function getLlmSettingsForApi(): Promise<LlmSettingsForApi> {
     externalApiUrl: row.externalApiUrl?.trim() || "https://openrouter.ai/api/v1",
     externalApiKeyMasked: row.externalApiKey ? maskApiKey(row.externalApiKey) : null,
     externalModel: row.externalModel?.trim() || "anthropic/claude-sonnet-4",
+    useQuickResponses: row.useQuickResponses ?? true,
   };
 }
 
@@ -81,6 +88,7 @@ export async function updateLlmSettings(
     externalApiUrl?: string;
     externalApiKey?: string | null;
     externalModel?: string;
+    useQuickResponses?: boolean;
   }
 ): Promise<void> {
   const db = await getDb();
@@ -93,6 +101,7 @@ export async function updateLlmSettings(
       externalApiUrl: data.externalApiUrl ?? "https://openrouter.ai/api/v1",
       externalApiKey: data.externalApiKey ?? null,
       externalModel: data.externalModel ?? "anthropic/claude-sonnet-4",
+      useQuickResponses: data.useQuickResponses ?? true,
     });
     return;
   }
@@ -102,6 +111,7 @@ export async function updateLlmSettings(
   if (data.externalApiUrl !== undefined) updates.externalApiUrl = data.externalApiUrl;
   if (data.externalApiKey !== undefined) updates.externalApiKey = data.externalApiKey ?? null;
   if (data.externalModel !== undefined) updates.externalModel = data.externalModel;
+  if (data.useQuickResponses !== undefined) updates.useQuickResponses = data.useQuickResponses;
 
   if (Object.keys(updates).length === 0) return;
   await db.update(llmSettings).set(updates).where(eq(llmSettings.id, existing.id));

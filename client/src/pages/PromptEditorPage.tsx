@@ -9,29 +9,36 @@ import { toast } from "sonner";
 export default function PromptEditorPage() {
   const [prompt, setPrompt] = useState("");
   const [originalPrompt, setOriginalPrompt] = useState("");
+  const [basePrompt, setBasePrompt] = useState("");
   const [hasChanges, setHasChanges] = useState(false);
 
-  // Fetch current system prompt
+  // Fetch additional instructions (stored in DB)
   const { data: currentPrompt, isLoading } = trpc.document.getSystemPrompt.useQuery();
+  // Fetch base prompt (from file)
+  const { data: templatePrompt, isLoading: isTemplateLoading } =
+    trpc.document.getSystemPromptTemplate.useQuery();
 
   // Update system prompt mutation
   const updatePromptMutation = trpc.document.updateSystemPrompt.useMutation({
     onSuccess: () => {
-      toast.success("System prompt updated successfully");
+      toast.success("Дополнительные инструкции сохранены");
       setOriginalPrompt(prompt);
       setHasChanges(false);
     },
     onError: (error) => {
-      toast.error(error.message || "Failed to update system prompt");
+      toast.error(error.message || "Не удалось сохранить дополнительные инструкции");
     },
   });
 
   useEffect(() => {
-    if (currentPrompt?.prompt) {
-      setPrompt(currentPrompt.prompt);
-      setOriginalPrompt(currentPrompt.prompt);
-    }
+    const value = currentPrompt?.prompt ?? "";
+    setPrompt(value);
+    setOriginalPrompt(value);
   }, [currentPrompt]);
+
+  useEffect(() => {
+    setBasePrompt(templatePrompt?.prompt ?? "");
+  }, [templatePrompt]);
 
   const handlePromptChange = (value: string) => {
     setPrompt(value);
@@ -39,10 +46,6 @@ export default function PromptEditorPage() {
   };
 
   const handleSave = () => {
-    if (prompt.trim().length < 10) {
-      toast.error("System prompt must be at least 10 characters long");
-      return;
-    }
     updatePromptMutation.mutate({ prompt });
   };
 
@@ -51,7 +54,7 @@ export default function PromptEditorPage() {
     setHasChanges(false);
   };
 
-  if (isLoading) {
+  if (isLoading || isTemplateLoading) {
     return (
       <div className="flex justify-center items-center h-96">
         <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
@@ -62,8 +65,10 @@ export default function PromptEditorPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">System Prompt Editor</h1>
-        <p className="text-muted-foreground">Customize how the AI assistant responds to queries</p>
+        <h1 className="text-3xl font-bold">Редактор промта</h1>
+        <p className="text-muted-foreground">
+          Основной промт используется как база, дополнительные инструкции дополняют его.
+        </p>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -71,19 +76,34 @@ export default function PromptEditorPage() {
         <div className="lg:col-span-2 space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Edit System Prompt</CardTitle>
+              <CardTitle>Основной промт (read-only)</CardTitle>
               <CardDescription>
-                This prompt defines the assistant's behavior and response style
+                Загружается из `prompts/system.sanext.txt` (или пути из `RAG_SYSTEM_PROMPT_PATH`)
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Textarea
+                value={basePrompt}
+                readOnly
+                className="min-h-72 font-mono text-sm"
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Дополнительные инструкции</CardTitle>
+              <CardDescription>
+                Эти инструкции добавляются к основному промту и могут уточнять поведение.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <Textarea
                 value={prompt}
                 onChange={(e) => handlePromptChange(e.target.value)}
-                placeholder="Enter system prompt..."
-                className="min-h-96 font-mono text-sm"
+                placeholder="Например: Для таблиц всегда сохраняй все строки, включая последнюю."
+                className="min-h-72 font-mono text-sm"
               />
-
               <div className="flex gap-2">
                 <Button
                   onClick={handleSave}
@@ -93,12 +113,12 @@ export default function PromptEditorPage() {
                   {updatePromptMutation.isPending ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      Saving...
+                      Сохранение...
                     </>
                   ) : (
                     <>
                       <Save className="w-4 h-4" />
-                      Save Changes
+                      Сохранить
                     </>
                   )}
                 </Button>
@@ -110,13 +130,13 @@ export default function PromptEditorPage() {
                   className="gap-2"
                 >
                   <RotateCcw className="w-4 h-4" />
-                  Reset
+                  Сброс
                 </Button>
               </div>
 
               {hasChanges && (
                 <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-md text-sm text-yellow-800">
-                  You have unsaved changes
+                  Есть несохранённые изменения
                 </div>
               )}
             </CardContent>
@@ -127,38 +147,33 @@ export default function PromptEditorPage() {
         <div className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Tips</CardTitle>
+              <CardTitle className="text-base">Подсказки</CardTitle>
             </CardHeader>
             <CardContent className="text-sm space-y-3 text-muted-foreground">
               <div>
-                <p className="font-medium text-foreground mb-1">Be Specific</p>
-                <p>Define the assistant's role and expertise clearly</p>
+                <p className="font-medium text-foreground mb-1">Точечные правила</p>
+                <p>Добавляйте конкретные инструкции под текущие кейсы.</p>
               </div>
 
               <div>
-                <p className="font-medium text-foreground mb-1">Set Tone</p>
-                <p>Specify the communication style (professional, friendly, etc.)</p>
+                <p className="font-medium text-foreground mb-1">Без конфликтов</p>
+                <p>Не дублируйте и не противоречьте базовому промту.</p>
               </div>
 
               <div>
-                <p className="font-medium text-foreground mb-1">Provide Context</p>
-                <p>Mention the documents or knowledge base the assistant uses</p>
-              </div>
-
-              <div>
-                <p className="font-medium text-foreground mb-1">Set Boundaries</p>
-                <p>Specify what the assistant should or shouldn't do</p>
+                <p className="font-medium text-foreground mb-1">Проверка результата</p>
+                <p>После изменения прогоните 2-3 тестовых запроса в Test Panel.</p>
               </div>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Current Prompt</CardTitle>
+              <CardTitle className="text-base">Текущие доп. инструкции</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-sm bg-muted p-3 rounded-md max-h-48 overflow-y-auto font-mono text-xs">
-                {originalPrompt}
+                {originalPrompt || "Не заданы"}
               </div>
             </CardContent>
           </Card>

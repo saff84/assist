@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Switch } from "@/components/ui/switch";
 import { Loader2, Save, Cpu, Cloud, CheckCircle, XCircle } from "lucide-react";
 import { toast } from "sonner";
 
@@ -17,6 +18,7 @@ export default function LlmSettingsPage() {
   const [externalApiUrl, setExternalApiUrl] = useState("");
   const [externalApiKey, setExternalApiKey] = useState("");
   const [externalModel, setExternalModel] = useState("");
+  const [useQuickResponses, setUseQuickResponses] = useState(true);
   const [hasChanges, setHasChanges] = useState(false);
 
   useEffect(() => {
@@ -25,6 +27,7 @@ export default function LlmSettingsPage() {
       setExternalApiUrl(settings.externalApiUrl || "");
       setExternalApiKey("");
       setExternalModel(settings.externalModel || "");
+      setUseQuickResponses(settings.useQuickResponses ?? true);
     }
   }, [settings]);
 
@@ -44,9 +47,20 @@ export default function LlmSettingsPage() {
     const urlChanged = externalApiUrl !== (settings.externalApiUrl || "");
     const modelChanged = externalModel !== (settings.externalModel || "");
     const providerChanged = provider !== settings.provider;
+    const quickResponsesChanged =
+      useQuickResponses !== (settings.useQuickResponses ?? true);
     const keyChanged = externalApiKey.length > 0;
-    setHasChanges(providerChanged || urlChanged || modelChanged || keyChanged);
-  }, [provider, externalApiUrl, externalModel, externalApiKey, settings]);
+    setHasChanges(
+      providerChanged || urlChanged || modelChanged || keyChanged || quickResponsesChanged
+    );
+  }, [
+    provider,
+    externalApiUrl,
+    externalModel,
+    externalApiKey,
+    useQuickResponses,
+    settings,
+  ]);
 
   const handleSave = () => {
     if (provider === "external" && !externalApiUrl.trim()) {
@@ -62,6 +76,7 @@ export default function LlmSettingsPage() {
       externalApiUrl: externalApiUrl.trim() || undefined,
       externalApiKey: externalApiKey.trim() ? externalApiKey.trim() : undefined,
       externalModel: externalModel.trim() || undefined,
+      useQuickResponses,
     });
   };
 
@@ -228,6 +243,20 @@ export default function LlmSettingsPage() {
               </div>
             </div>
           )}
+
+          <div className="flex items-center justify-between rounded-md border p-3">
+            <div className="space-y-1">
+              <Label htmlFor="quick-responses-toggle">Быстрые ответы</Label>
+              <p className="text-xs text-muted-foreground">
+                Вкл: быстрые ответы из чанков. Выкл: все вопросы отправляются в LLM.
+              </p>
+            </div>
+            <Switch
+              id="quick-responses-toggle"
+              checked={useQuickResponses}
+              onCheckedChange={setUseQuickResponses}
+            />
+          </div>
 
           <div className="flex gap-2">
             <Button

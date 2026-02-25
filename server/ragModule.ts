@@ -11,6 +11,7 @@ import {
 import { getDb } from "./db";
 import * as documentDb from "./documentDb";
 import { invokeLLM } from "./_core/llm";
+import { getLlmSettingsForInvoke } from "./llmSettingsDb";
 import { getRagConfig } from "./rag/config";
 import { getSystemPromptTemplate } from "./rag/promptLoader";
 import {
@@ -1229,6 +1230,63 @@ type RawAnswerOptions = {
   allowTables?: boolean;
 };
 
+interface RequestedCatalogAttribute {
+  name: string;
+  terms: string[];
+}
+
+type CatalogQuickResponseMode =
+  | "description"
+  | "technical_characteristics"
+  | "product_only";
+type CatalogBlockIntent =
+  | "description"
+  | "technical_characteristics"
+  | "articles"
+  | "coil_sizes";
+
+const CATALOG_ATTRIBUTE_PATTERNS: Array<{
+  name: string;
+  terms: string[];
+}> = [
+  { name: "толщина стенки", terms: ["толщина стенки", "толщина", "стенка"] },
+  { name: "диаметр", terms: ["диаметр", "наружный диаметр", "внутренний диаметр"] },
+  { name: "рабочее давление", terms: ["рабочее давление", "давление"] },
+  { name: "максимальное давление", terms: ["максимальное давление", "предельное давление"] },
+  { name: "температура", terms: ["температура", "рабочая температура"] },
+  { name: "материал", terms: ["материал"] },
+  { name: "срок службы", terms: ["срок службы"] },
+  { name: "длина бухты", terms: ["длина бухты", "длина бухт"] },
+  { name: "длина", terms: ["длина"] },
+  { name: "вес бухты", terms: ["вес бухты", "вес"] },
+];
+
+/** Артикул товара: 4–6 цифр, опционально дефис и цифра (напр. 1182, 1615-2). */
+const ARTICLE_PATTERN = /\b\d{4,6}(-\d)?\b/;
+
+function hasExplicitArticleInQuery(query: string): boolean {
+  return ARTICLE_PATTERN.test(query || "");
+}
+
+function extractRequestedCatalogAttribute(
+  query: string
+): RequestedCatalogAttribute | null {
+  const normalized = normalizeToken(query || "");
+  if (!normalized) return null;
+  for (const candidate of CATALOG_ATTRIBUTE_PATTERNS) {
+    const hasMatch = candidate.terms.some((term) =>
+      normalized.includes(normalizeToken(term))
+    );
+    if (hasMatch) {
+      return {
+        name: candidate.name,
+        terms: candidate.terms.map((term) => normalizeToken(term)),
+      };
+    }
+  }
+  return null;
+}
+
 function sanitizeTableLabel(label?: string | null): string | undefined {
   if (!label) return undefined;
   const trimmed = label.trim().replace(/[:.：]+$/, "");
@@ -1248,6 +1306,37 @@ function inferTableLabel(columns: string[]): string | undefined {
     return "Размеры";
   }
   return undefined;
+}
+
+function normalizeTableColumnDisplay(raw: string): string {
+  const normalized = raw
+    .replace(/\s+/g, " ")
+    .replace(/[«»]/g, "")
+    .trim();
+  if (!normalized) return normalized;
+
+  // OCR/manual markup often merges caption + real column title in one key.
+  // Keep the last segment, then map common catalog headers to canonical titles.
+  const parts = normalized
+    .split(/\s*\/\s*|(?<=\S)\s{2,}(?=\S)/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const tail = (parts[parts.length - 1] || normalized).toLowerCase();
+
+  if (tail.includes("артикул")) return "Артикул";
+  if (tail.includes("наименование")) return "Наименование";
+  if (tail.includes("диаметр наруж")) return "Диаметр наружный, мм";
+  if (tail.includes("внешний диаметр бухт")) return "Внешний диаметр бухты, мм";
+  if (tail.includes("внутренний диаметр")) return "Внутренний диаметр бухты, мм";
+  if (tail.includes("высота бухт")) return "Высота бухты, мм";
+  if (tail.includes("толщина стен")) return "Толщина стенки, мм";
+  if (tail.includes("длина бухт")) return "Длина бухты, м";
+  if (tail.includes("диаметр") && tail.includes("мм")) return "Диаметр трубы, мм";
+  if (tail.includes("характерист")) return "Характеристика";
+  if (tail.includes("ед") && tail.includes("изм")) return "Единица измерения";
+  if (tail.includes("значен")) return "Значение";
+
+  return parts.length > 1 ? parts[parts.length - 1] : normalized;
 }
 
 function tableRowsToMarkdown(
@@ -1283,7 +1372,7 @@ function tableRowsToMarkdown(
   const columns = rawColumns
     .map((original) => ({
       original,
-      display: normalizeCell(original),
+      display: normalizeTableColumnDisplay(normalizeCell(original)),
     }))
     .filter((entry) => !skipColumn(entry.display));
   if (!columns.length) return null;
@@ -1914,12 +2003,294 @@ function queryWantsTables(query: string): boolean {
   );
 }
 
+function hasProductSignalInQuery(query: string): boolean {
+  const q = normalizeToken(query || "");
+  if (!q) return false;
+  if (/\b\d{3,}\b/.test(q)) return true;
+  if (/\b\d{1,3}[xх*]\d{1,2}(?:[.,]\d)?\b/.test(q)) return true;
+  return /sanext|труб|фитинг|коллектор|радиатор|универсаль|stabil|серия|модель|артикул|sku/.test(
+    q
+  );
+}
+
+function detectCatalogQuickResponseMode(
+  query: string,
+  hasProductSignal: boolean
+): CatalogQuickResponseMode | null {
+  if (!hasProductSignal) return null;
+  const q = normalizeToken(query || "");
+  if (!q) return null;
+
+  const asksDescription = /\bописан|что это|о товаре|для чего\b/.test(q);
+  if (asksDescription) {
+    return "description";
+  }
+
+  const asksTechChars =
+    /техническ.*характерист|тех.*характерист|характеристик|параметр|таблиц/.test(
+      q
+    ) && !/толщин|диаметр|давлен|температур|материал|длин/.test(q);
+  if (asksTechChars) {
+    return "technical_characteristics";
+  }
+
+  const tokenCount = q.split(/\s+/).filter(Boolean).length;
+  const hasQuestionIntent =
+    /какой|какая|какие|сколько|как|почему|зачем|описан|характерист|таблиц|давлен|толщин|диаметр|температур|материал|длин/.test(
+      q
+    );
+  if (!hasQuestionIntent && tokenCount <= 6) {
+    return "product_only";
+  }
+
+  return null;
+}
+
+function detectCatalogBlockIntent(query: string): CatalogBlockIntent | null {
+  const q = normalizeToken(query || "");
+  if (!q) return null;
+  if (/описан|о товаре|для чего|назначен/.test(q)) {
+    return "description";
+  }
+  if (/техническ.*характерист|тех.*характерист/.test(q)) {
+    return "technical_characteristics";
+  }
+  if (/артикул|номенклатур/.test(q)) {
+    return "articles";
+  }
+  if (/размер.*бухт|вес.*бухт|высота.*бухт|внешн.*диаметр.*бухт/.test(q)) {
+    return "coil_sizes";
+  }
+  return null;
+}
+
+function isLikelyProductOnlyQuery(query: string): boolean {
+  const q = normalizeToken(query || "");
+  if (!q) return false;
+  const words = q.split(/\s+/).filter(Boolean);
+  const hasQuestionWords =
+    /какой|какая|какие|сколько|как|почему|зачем|описан|характерист|таблиц|толщин|диаметр|давлен|температур|материал|длин|вес/.test(
+      q
+    );
+  return words.length <= 6 && !hasQuestionWords;
+}
+
+function hasConfidentProductMatch(
+  query: string,
+  source: ContextSourceEntry
+): boolean {
+  const queryNorm = normalizeToken(query || "");
+  if (!queryNorm) return false;
+  const titleNorm = normalizeToken(
+    `${source.sectionTitle ?? ""} ${source.sectionPath ?? ""}`
+  );
+  if (!titleNorm) return false;
+
+  // Strong signal: article/SKU id must match in title/section.
+  const skuMatches = queryNorm.match(/\b\d{3,}\b/g) ?? [];
+  if (skuMatches.length > 0) {
+    return skuMatches.some((sku) => titleNorm.includes(sku));
+  }
+
+  const drop = new Set([
+    "описание",
+    "технические",
+    "характеристики",
+    "характеристика",
+    "артикул",
+    "артикулы",
+    "номенклатура",
+    "размеры",
+    "бухты",
+    "таблица",
+    "таблицы",
+    "санекст",
+    "какая",
+    "какой",
+    "какие",
+    "сколько",
+    "вес",
+    "толщина",
+    "диаметр",
+    "давление",
+    "температура",
+  ]);
+  const productTokens = queryNorm
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 4 && !drop.has(t));
+  if (!productTokens.length) return false;
+
+  const overlap = productTokens.filter((t) => titleNorm.includes(t));
+  return overlap.length >= Math.max(1, Math.ceil(productTokens.length * 0.5));
+}
+
+function extractCatalogBlockByIntent(
+  source: ContextSourceEntry,
+  intent: CatalogBlockIntent
+): string | null {
+  if (intent === "description") {
+    return extractDescriptionBlockFromSource(source);
+  }
+
+  if (intent === "technical_characteristics") {
+    return extractTechnicalTableFromSource(source);
+  }
+
+  const tables = source.tables ?? [];
+  const byTable = tables.find((entry) => {
+    const label = `${entry.label ?? ""} ${entry.introLine ?? ""}`.toLowerCase();
+    const header = (entry.headerLine ?? "").toLowerCase();
+    if (intent === "articles") {
+      return /артикул|номенклатур/.test(label) || /артикул|наименование/.test(header);
+    }
+    if (intent === "coil_sizes") {
+      return /размер.*бухт|вес.*бухт/.test(label) || /внешний диаметр бухты|высота бухты|вес бухты/.test(header);
+    }
+    return false;
+  });
+  if (byTable) {
+    const heading = byTable.introLine || byTable.label || "Таблица";
+    return `${heading ? `**${heading}**\n` : ""}${byTable.markdown}`.trim();
+  }
+
+  const content = normalizeAnswerSpacing(source.chunkContent || "");
+  if (!content) return null;
+  const patterns =
+    intent === "articles"
+      ? [/(артикул[ы]?|номенклатур[аы])/i]
+      : [/(размеры?\s+бухт|вес\s+бухт)/i];
+  const startMatch = patterns
+    .map((p) => content.match(p))
+    .find((m): m is RegExpMatchArray => Boolean(m));
+  if (!startMatch || startMatch.index === undefined) return null;
+  const tail = content.slice(startMatch.index);
+  const nextHeading = tail.match(
+    /\n\s*(описани[ея]|техническ[ие]+\s+характеристик|артикул[ы]?|номенклатур[аы]|размеры?\s+бухт)\s*\n/i
+  );
+  const section =
+    nextHeading && (nextHeading.index ?? 0) > 0
+      ? tail.slice(0, nextHeading.index)
+      : tail;
+  return section.trim() || null;
+}
+
+function extractDescriptionBlockFromSource(source: ContextSourceEntry): string | null {
+  const cleaned = stripMarkdownTables((source.chunkContent ?? "").trim());
+  if (!cleaned) return null;
+  const normalized = normalizeAnswerSpacing(cleaned);
+  const descMatch = normalized.match(/описани[ея][\s\S]*$/i);
+  const base = descMatch ? descMatch[0].trim() : normalized;
+  const sectionBreak = base.search(
+    /(техническ[ие]+\s+характеристик|артикул[ы]?\b|номенклатур[аы]\b|размеры?\s+бухт\b)/i
+  );
+  const block = (sectionBreak >= 0 ? base.slice(0, sectionBreak) : base).trim();
+  if (block) return block;
+
+  const firstParagraph = normalized
+    .split(/\n\s*\n/)
+    .find((part) => part.trim().length > 0)
+    ?.trim();
+  return firstParagraph ? firstParagraph : null;
+}
+
+function extractTechnicalTableFromSource(source: ContextSourceEntry): string | null {
+  const table = (source.tables ?? []).find((entry) => {
+    const label = `${entry.label ?? ""} ${entry.introLine ?? ""}`.toLowerCase();
+    const header = (entry.headerLine ?? "").toLowerCase();
+    return (
+      /техническ|характерист/.test(label) ||
+      /характерист|значение|ед\.\s*изм/.test(header)
+    );
+  });
+  if (table) {
+    const heading = table.introLine || table.label || "Технические характеристики";
+    return `${heading ? `**${heading}**\n` : ""}${table.markdown}`.trim();
+  }
+
+  // Fallback for plain text chunks: cut section between
+  // "Технические характеристики" and next catalog section.
+  const content = normalizeAnswerSpacing(source.chunkContent || "");
+  if (!content) return null;
+  const lower = content.toLowerCase();
+  const startIdx = lower.indexOf("технические характеристики");
+  if (startIdx === -1) return null;
+  const tail = content.slice(startIdx);
+  const endMatch = tail.match(
+    /\n\s*(артикул[ы]?\b|номенклатур[аы]\b|размеры?\s+бухт\b)\s*/i
+  );
+  const section = endMatch
+    ? tail.slice(0, endMatch.index ?? tail.length)
+    : tail;
+  const trimmed = section.trim();
+  if (!trimmed) return null;
+  return trimmed;
+}
+
+function filterMarkdownTableByAttribute(
+  markdown: string,
+  attribute: RequestedCatalogAttribute
+): string | null {
+  const lines = markdown
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("|") && line.includes("|"));
+  if (lines.length < 3) return null;
+
+  const header = lines[0];
+  const divider = lines[1];
+  const body = lines.slice(2);
+  const matchedRows = body.filter((row) => {
+    const normalizedRow = normalizeToken(row.replace(/\|/g, " "));
+    return attribute.terms.some((term) => normalizedRow.includes(term));
+  });
+
+  if (!matchedRows.length) return null;
+  return [header, divider, ...matchedRows].join("\n");
+}
+
+function buildAttributeOnlyRawAnswer(
+  source: ContextSourceEntry,
+  attribute: RequestedCatalogAttribute
+): string | null {
+  const tableMatches = (source.tables ?? [])
+    .map((table) => {
+      const filtered = filterMarkdownTableByAttribute(table.markdown, attribute);
+      if (!filtered) return null;
+      const heading = table.introLine || table.label || "Технические характеристики";
+      return `${heading ? `**${heading}**\n` : ""}${filtered}`.trim();
+    })
+    .filter((part): part is string => Boolean(part));
+
+  if (tableMatches.length > 0) {
+    return normalizeAnswerSpacing(
+      `Запрошенный параметр: ${attribute.name}\n\n${tableMatches.join("\n\n")}`
+    );
+  }
+
+  const content = source.chunkContent || "";
+  const contentLines = content
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const matchingLine = contentLines.find((line) => {
+    const normalized = normalizeToken(line);
+    return attribute.terms.some((term) => normalized.includes(term));
+  });
+  if (!matchingLine) return null;
+  return normalizeAnswerSpacing(
+    `Запрошенный параметр: ${attribute.name}\n\n${matchingLine}`
+  );
+}
+
 function isTooGenericCatalogQuery(query: string): boolean {
   const q = query.toLowerCase().trim();
   if (!q) return false;
   const words = q.split(/\s+/).filter(Boolean);
   const hasGenericIntent =
-    /характерист|параметр|свойств|данн|описан|таблиц|размер/.test(q);
+    /характерист|параметр|свойств|данн|описан|таблиц|размер|диаметр|толщин|давлен|температур|материал|длин/.test(
+      q
+    );
   const hasSpecificSignals =
     /артикул|sku|sanext|универсаль|stabil|hp|модель|серия|труба|фитинг|\b\d{3,}\b/.test(
       q
@@ -2208,10 +2579,8 @@ function ensureTablesInResponse(
       if (!table.markdown) {
         return;
       }
-      const headerLine = table.headerLine || table.markdown.split("\n")[0];
-      if (headerLine && response.includes(headerLine)) {
-        return;
-      }
+      // Do not skip by header-only match: model may output a truncated table
+      // with correct header but missing tail rows.
       if (response.includes(table.markdown.trim())) {
         return;
       }
@@ -2377,13 +2746,43 @@ async function fetchActiveSystemPrompt(): Promise<string> {
 }
 
 function composeSystemPrompt(template: string, activePrompt: string): string {
-  return `${activePrompt}\n\n${template}`.trim();
+  const extra = (activePrompt || "").trim();
+  if (!extra) {
+    return template.trim();
+  }
+  return `${template.trim()}\n\n[Дополнительные инструкции]\n${extra}`.trim();
 }
 
 function buildUserMessage(
   context: string,
   query: string
 ): string {
+  const explicitArticle = hasExplicitArticleInQuery(query);
+  const requestedAttribute = hasCatalogIntent(query)
+    ? extractRequestedCatalogAttribute(query)
+    : null;
+
+  let detailPolicy: string;
+  if (requestedAttribute && explicitArticle) {
+    // Точный параметр для конкретного артикула — один краткий ответ
+    detailPolicy = `КРИТИЧЕСКИ ВАЖНО — РЕЖИМ ТОЧЕЧНОГО ОТВЕТА:
+Пользователь спрашивает ОДИН параметр («${requestedAttribute.name}») для конкретного артикула.
+1. Ответь ОДНИМ кратким предложением с числом и единицей (например: «Длина бухты для артикула 1182 составляет 200 м.»).
+2. НЕ выводи таблицы — ни целиком, ни частично. НЕ перечисляй остальные характеристики.`;
+  } else if (explicitArticle) {
+    // Указан артикул (4–6 цифр) — ответ только по нему, не вся таблица
+    detailPolicy = `КРИТИЧЕСКИ ВАЖНО — КОНКРЕТНЫЙ АРТИКУЛ:
+В вопросе указан конкретный артикул товара (4–6 цифр).
+1. Отвечай ТОЛЬКО по этому артикулу — данные только для него.
+2. НЕ выводи таблицу со всеми артикулами. Покажи только строку/данные для указанного артикула.
+3. Игнорируй инструкции ниже про «перечисляй все строки таблицы» и «выводи каждую таблицу» — они не применяются, когда спрошен один артикул.`;
+  } else {
+    detailPolicy = `КРИТИЧЕСКИ ВАЖНО — ПОЛНОТА ИНФОРМАЦИИ:
+Для выбранных источников (каталог для характеристик, пособие для монтажа) используй ВСЕ доступные фрагменты о запрашиваемом товаре. Перечисляй ВСЕ характеристики, которые упомянуты в источниках: материал, диаметры, размеры, технические параметры, применение, преимущества и т.д. Не ограничивайся только частью информации — предоставляй полную картину.
+
+ОБЯЗАТЕЛЬНО включай в ответ ВСЕ технические характеристики из таблиц (максимальное давление, рабочее давление, температура, срок службы, диаметры, толщина стенки и т.д.), все преимущества, все особенности применения, все важные примечания.`;
+  }
+
   return `Задача: ответить на вопрос пользователя только на основе источников ниже. Если сведений нет — так и скажи. 
 
 КРИТИЧЕСКИ ВАЖНО — ЯЗЫК ОТВЕТА:
@@ -2401,10 +2800,7 @@ function buildUserMessage(
 2. Для вопросов о монтаже, установке, подключении, сборке оборудования используй ТОЛЬКО источники из «Пособия по монтажу» (где "Тип: instruction"). НЕ используй каталог для монтажных вопросов.
 3. В каждом источнике указан его тип в поле "Тип:". Строго следуй правилу выбора источников по типу вопроса.
 
-КРИТИЧЕСКИ ВАЖНО — ПОЛНОТА ИНФОРМАЦИИ:
-Для выбранных источников (каталог для характеристик, пособие для монтажа) используй ВСЕ доступные фрагменты о запрашиваемом товаре. Перечисляй ВСЕ характеристики, которые упомянуты в источниках: материал, диаметры, размеры, технические параметры, применение, преимущества и т.д. Не ограничивайся только частью информации — предоставляй полную картину.
-
-ОБЯЗАТЕЛЬНО включай в ответ ВСЕ технические характеристики из таблиц (максимальное давление, рабочее давление, температура, срок службы, диаметры, толщина стенки и т.д.), все преимущества, все особенности применения, все важные примечания.
+${detailPolicy}
 
 КРИТИЧЕСКИ ВАЖНО — ИСПОЛЬЗОВАНИЕ ОРИГИНАЛЬНЫХ ФОРМУЛИРОВОК:
 1. НЕ перефразируй и НЕ пересказывай информацию из каталога своими словами.
@@ -2423,6 +2819,9 @@ function buildUserMessage(
 4. Обязательно включай единицы измерения (мм, бар, °C и т.д.), если они указаны в таблице.
 5. НЕ придумывай значения, которых нет в источниках.
 6. Если в таблице несколько строк, перечисляй ВСЕ строки точно, как они указаны.
+7. НЕ обрезай таблицу: если в источнике есть строка в конце таблицы, она ДОЛЖНА быть в ответе.
+8. Перед финализацией ответа выполни самопроверку: количество строк в каждой таблице ответа должно совпадать с количеством строк в соответствующей таблице источника.
+9. Если таблица большая — все равно верни ее ПОЛНОСТЬЮ; запрещено выдавать частичную таблицу.
 
 КРИТИЧЕСКИ ВАЖНО — ФОРМАТИРОВАНИЕ ТАБЛИЦ:
 1. Если данные из источника представлены таблицей, ОБЯЗАТЕЛЬНО выводи их в ответе в виде Markdown-таблицы. Минимальная структура: «| Характеристика | Значение |» либо используй оригинальные заголовки колонок.
@@ -2480,6 +2879,8 @@ export async function processRAGQuery(
 ): Promise<RAGResponse> {
   const start = Date.now();
   const config = getRagConfig();
+  const llmSettings = await getLlmSettingsForInvoke();
+  const quickResponsesEnabled = llmSettings.useQuickResponses;
   const topK = options?.topK ?? config.retrieval.mmr.resultCount;
   const forcedDocType = options?.forceDocumentType;
   const docTypeLabel = (docType: string) => {
@@ -2557,6 +2958,9 @@ export async function processRAGQuery(
     installation: hasInstallationIntent(ragQuery.query),
     catalog: hasCatalogIntent(ragQuery.query),
   };
+  const requestedCatalogAttribute = intents.catalog
+    ? extractRequestedCatalogAttribute(ragQuery.query)
+    : null;
 
   // For very generic catalog queries without product context, ask a clarification
   // before taking fast/raw single-chunk paths.
@@ -2905,10 +3309,67 @@ export async function processRAGQuery(
 
   const fullUsedSources = context.usedSources;
   const usedSources = fullUsedSources.slice(0, topK);
+  const hasProductSignal =
+    variantFilterKeys.size > 0 || hasProductSignalInQuery(ragQuery.query);
+  const hasAttributeRequest = Boolean(requestedCatalogAttribute);
+  const catalogBlockIntent = intents.catalog
+    ? detectCatalogBlockIntent(ragQuery.query)
+    : null;
+  const confidentSource = intents.catalog
+    ? fullUsedSources
+        .slice(0, Math.min(4, fullUsedSources.length))
+        .find((source) => hasConfidentProductMatch(ragQuery.query, source)) ?? null
+    : null;
+  const productOnlyQuick =
+    intents.catalog &&
+    !catalogBlockIntent &&
+    !hasAttributeRequest &&
+    hasProductSignal &&
+    isLikelyProductOnlyQuery(ragQuery.query);
 
   const { sources, chunks } = mapSourcesForResponse(usedSources);
 
-  if (shouldReturnRawAnswer(fullUsedSources, variantFilterKeys)) {
+  if (quickResponsesEnabled && catalogBlockIntent && confidentSource) {
+    const block = extractCatalogBlockByIntent(confidentSource, catalogBlockIntent);
+    if (block) {
+      const mapped = mapSourcesForResponse([confidentSource]);
+      return {
+        response: block,
+        sources: mapped.sources,
+        chunks: mapped.chunks,
+        responseTime: Date.now() - start,
+        tokensUsed:
+          Math.ceil(ragQuery.query.length / TOKEN_CHAR_RATIO) +
+          Math.ceil(block.length / TOKEN_CHAR_RATIO),
+      };
+    }
+  }
+
+  if (quickResponsesEnabled && productOnlyQuick && confidentSource) {
+    const rawAnswer = buildRawAnswerFromSources([confidentSource], {
+      allowTables: true,
+    });
+    if (rawAnswer) {
+      const mapped = mapSourcesForResponse([confidentSource]);
+      return {
+        response: rawAnswer,
+        sources: mapped.sources,
+        chunks: mapped.chunks,
+        responseTime: Date.now() - start,
+        tokensUsed:
+          Math.ceil(ragQuery.query.length / TOKEN_CHAR_RATIO) +
+          Math.ceil(rawAnswer.length / TOKEN_CHAR_RATIO),
+      };
+    }
+  }
+
+  if (
+    quickResponsesEnabled &&
+    !intents.catalog &&
+    !catalogBlockIntent &&
+    !requestedCatalogAttribute &&
+    shouldReturnRawAnswer(fullUsedSources, variantFilterKeys)
+  ) {
     const rawAnswer = buildRawAnswerFromSources(fullUsedSources, {
       allowTables: true,
     });
@@ -2939,12 +3400,8 @@ export async function processRAGQuery(
     primaryDocType === "passport" ||
     primaryDocType === "certificate" ||
     primaryDocType === "warranty_faq";
-  const catalogFastPath =
-    primaryDocType === "catalog" &&
-    isObviousSingleChunkAnswer(finalChunks, config) &&
-    !finalChunks[0]?.boostsApplied?.includes("sku_match_chunk") &&
-    !finalChunks[0]?.boostsApplied?.includes("sku_match_document");
-  if (specialDoc || catalogFastPath) {
+  const catalogFastPath = false;
+  if (quickResponsesEnabled && (specialDoc || catalogFastPath)) {
     const allowTables = queryWantsTables(ragQuery.query);
     const topSource = fullUsedSources[0];
     if (primaryDocType === "warranty_faq" && topSource?.chunkContent) {
@@ -3048,7 +3505,10 @@ ${context.context}
     temperature: config.llm.temperature,
     top_p: config.llm.topP,
     repeat_penalty: config.llm.repeatPenalty,
-    maxTokens: config.llm.maxTokens,
+    maxTokens:
+      intents.catalog && queryWantsTables(ragQuery.query)
+        ? Math.max(config.llm.maxTokens, 4096)
+        : config.llm.maxTokens,
   });
 
   let messageContent =
@@ -3056,8 +3516,10 @@ ${context.context}
     "В документах нет информации о вашем вопросе.";
 
   // Auto-appending tables is useful for catalog answers, but degrades passports/certificates/FAQ.
-  // Only force-append tables for those doc types when the query explicitly asks for tables.
-  const allowAutoTables = !specialDoc || wantsTables;
+  // When user specifies an article (4–6 digits) or a single attribute, don't append full tables.
+  const explicitArticle = hasExplicitArticleInQuery(ragQuery.query);
+  const allowAutoTables =
+    (!specialDoc || wantsTables) && !requestedCatalogAttribute && !explicitArticle;
   if (allowAutoTables) {
     messageContent = ensureTablesInResponse(messageContent, usedSources);
   }

@@ -103,6 +103,7 @@ export const llmRouter = router({
         externalApiUrl: z.string().optional(),
         externalApiKey: z.string().nullable().optional(),
         externalModel: z.string().optional(),
+        useQuickResponses: z.boolean().optional(),
       })
     )
     .mutation(async ({ input }) => {
@@ -111,6 +112,7 @@ export const llmRouter = router({
         externalApiUrl: input.externalApiUrl,
         externalApiKey: input.externalApiKey,
         externalModel: input.externalModel,
+        useQuickResponses: input.useQuickResponses,
       });
       return { success: true };
     }),
@@ -122,6 +124,7 @@ export const llmRouter = router({
         provider: "external" as const,
         model: settings.externalModel,
         configured: Boolean(settings.externalApiKey),
+        quickResponsesEnabled: settings.useQuickResponses,
       };
     }
     const local = await getLocalLlmStatus();
@@ -133,6 +136,7 @@ export const llmRouter = router({
       llmModel: local.llmModel,
       llmReady: local.llmReady,
       forgeConfigured: local.forgeConfigured,
+      quickResponsesEnabled: settings.useQuickResponses,
     };
   }),
 });

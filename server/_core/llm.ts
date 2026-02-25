@@ -226,8 +226,40 @@ const resolveLocalApiUrl = () => {
 };
 
 const resolveExternalApiUrl = (baseUrl: string) => {
-  const u = baseUrl.replace(/\/$/, "");
-  return u.includes("/v1/chat") ? u : `${u}/v1/chat/completions`;
+  const normalized = (baseUrl || "").trim().replace(/\/+$/, "");
+  if (!normalized) {
+    throw new Error("External API URL is empty");
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new Error(`Invalid external API URL: ${baseUrl}`);
+  }
+
+  // OpenAI-compatible providers may expose either:
+  // - .../api/v1
+  // - .../v1
+  // - .../chat/completions (already final endpoint)
+  const pathname = parsed.pathname.replace(/\/+$/, "");
+  if (/\/chat\/completions$/i.test(pathname)) {
+    return parsed.toString();
+  }
+
+  if (/\/api\/v1$/i.test(pathname)) {
+    parsed.pathname = `${pathname}/chat/completions`;
+    return parsed.toString();
+  }
+
+  if (/\/v1$/i.test(pathname)) {
+    parsed.pathname = `${pathname}/chat/completions`;
+    return parsed.toString();
+  }
+
+  // Fallback for custom OpenAI-compatible gateways.
+  parsed.pathname = `${pathname}/v1/chat/completions`;
+  return parsed.toString();
 };
 
 const normalizeResponseFormat = ({
@@ -287,8 +319,8 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     apiUrl = resolveExternalApiUrl(settings.externalApiUrl);
     apiKey = settings.externalApiKey;
     model =
-      params.model ||
       settings.externalModel ||
+      params.model ||
       process.env.LLM_MODEL_GENERATION ||
       "anthropic/claude-sonnet-4";
   } else {
