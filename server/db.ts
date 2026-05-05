@@ -161,4 +161,39 @@ export async function updateUserPassword(userId: number, passwordHash: string) {
   }
 }
 
+export async function getUserById(userId: number) {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot get user: database not available");
+    return undefined;
+  }
+
+  const result = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function updateUserSecurity(
+  userId: number,
+  data: Pick<InsertUser, "passwordHash" | "mustChangePassword">
+) {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot update user security: database not available");
+    throw new Error("Database not available");
+  }
+
+  try {
+    await db
+      .update(users)
+      .set({
+        passwordHash: data.passwordHash,
+        mustChangePassword: data.mustChangePassword,
+      })
+      .where(eq(users.id, userId));
+  } catch (error) {
+    console.error("[Database] Failed to update user security:", error);
+    throw error;
+  }
+}
+
 // TODO: add feature queries here as your schema grows.

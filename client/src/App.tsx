@@ -1,5 +1,6 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { useAuth } from "@/_core/hooks/useAuth";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -15,60 +16,110 @@ import StatisticsPage from "./pages/StatisticsPage";
 import UsersPage from "./pages/UsersPage";
 import FaqChunksPage from "./pages/FaqChunksPage";
 import LlmSettingsPage from "./pages/LlmSettingsPage";
+import LoginPage from "./pages/LoginPage";
+import ChangePasswordPage from "./pages/ChangePasswordPage";
 import DashboardLayout from "./components/DashboardLayout";
+import { Loader2 } from "lucide-react";
+
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, loading, user } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-muted-foreground">
+        <Loader2 className="w-6 h-6 animate-spin" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
+
+  if (user?.mustChangePassword) {
+    return <ChangePasswordPage />;
+  }
+
+  return <>{children}</>;
+}
 
 function Router() {
-  // make sure to consider if you need authentication for certain routes
   return (
     <Switch>
-      <Route path={"/"} component={Home} />
+      <Route path="/login" component={LoginPage} />
+      <Route path="/change-password" component={ChangePasswordPage} />
+      <Route path={"/"}>
+        <AuthGate>
+          <Home />
+        </AuthGate>
+      </Route>
       <Route path="/documents">
-        <DashboardLayout>
-          <DocumentsPage />
-        </DashboardLayout>
+        <AuthGate>
+          <DashboardLayout>
+            <DocumentsPage />
+          </DashboardLayout>
+        </AuthGate>
       </Route>
       <Route path="/documents/:id">
-        <DashboardLayout>
-          <DocumentDetailsPage />
-        </DashboardLayout>
+        <AuthGate>
+          <DashboardLayout>
+            <DocumentDetailsPage />
+          </DashboardLayout>
+        </AuthGate>
       </Route>
       <Route path="/documents/:id/annotate">
-        <DashboardLayout>
-          <DocumentAnnotationPage />
-        </DashboardLayout>
+        <AuthGate>
+          <DashboardLayout>
+            <DocumentAnnotationPage />
+          </DashboardLayout>
+        </AuthGate>
       </Route>
       <Route path="/documents/:id/visualize">
-        <DashboardLayout>
-          <DocumentVisualizationPage />
-        </DashboardLayout>
+        <AuthGate>
+          <DashboardLayout>
+            <DocumentVisualizationPage />
+          </DashboardLayout>
+        </AuthGate>
       </Route>
       <Route path="/prompt-editor">
-        <DashboardLayout>
-          <PromptEditorPage />
-        </DashboardLayout>
+        <AuthGate>
+          <DashboardLayout>
+            <PromptEditorPage />
+          </DashboardLayout>
+        </AuthGate>
       </Route>
       <Route path="/llm-settings">
-        <DashboardLayout>
-          <LlmSettingsPage />
-        </DashboardLayout>
+        <AuthGate>
+          <DashboardLayout>
+            <LlmSettingsPage />
+          </DashboardLayout>
+        </AuthGate>
       </Route>
       <Route path="/test-panel">
-        <DashboardLayout>
-          <TestPanelPage />
-        </DashboardLayout>
+        <AuthGate>
+          <DashboardLayout>
+            <TestPanelPage />
+          </DashboardLayout>
+        </AuthGate>
       </Route>
       <Route path="/statistics">
-        <DashboardLayout>
-          <StatisticsPage />
-        </DashboardLayout>
+        <AuthGate>
+          <DashboardLayout>
+            <StatisticsPage />
+          </DashboardLayout>
+        </AuthGate>
       </Route>
       <Route path="/faq-chunks">
-        <DashboardLayout>
-          <FaqChunksPage />
-        </DashboardLayout>
+        <AuthGate>
+          <DashboardLayout>
+            <FaqChunksPage />
+          </DashboardLayout>
+        </AuthGate>
       </Route>
       <Route path="/users">
-        <UsersPage />
+        <AuthGate>
+          <UsersPage />
+        </AuthGate>
       </Route>
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}

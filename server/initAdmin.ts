@@ -31,6 +31,7 @@ export async function initializeDefaultAdmin() {
       passwordHash,
       loginMethod: "email",
       role: "admin",
+      mustChangePassword: adminPassword === "admin123",
       lastSignedIn: new Date(),
     });
 

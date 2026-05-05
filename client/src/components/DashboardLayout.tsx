@@ -50,8 +50,6 @@ export default function DashboardLayout({
     const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY);
     return saved ? parseInt(saved, 10) : DEFAULT_WIDTH;
   });
-  const { user } = useAuth();
-
   useEffect(() => {
     localStorage.setItem(SIDEBAR_WIDTH_KEY, sidebarWidth.toString());
   }, [sidebarWidth]);
@@ -80,7 +78,7 @@ function DashboardLayoutContent({
   children,
   setSidebarWidth,
 }: DashboardLayoutContentProps) {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar } = useSidebar();
   const isCollapsed = state === "collapsed";
@@ -216,11 +214,14 @@ function DashboardLayoutContent({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
                 <DropdownMenuItem
-                  onClick={() => window.location.reload()}
+                  onClick={async () => {
+                    await logout();
+                    setLocation("/login");
+                  }}
                   className="cursor-pointer"
                 >
                   <LogOut className="mr-2 h-4 w-4" />
-                  <span>Reload App</span>
+                  <span>Выйти</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

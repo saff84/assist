@@ -90,7 +90,7 @@ services:
       weaviate:
         condition: service_healthy
     ports:
-      - "3000:3000"
+      - "${APP_PUBLIC_PORT:-80}:3000"
     environment:
       # Database
       DATABASE_URL: mysql://${MYSQL_USER:-assistant}:${MYSQL_PASSWORD:-assistant_password}@mysql:3306/${MYSQL_DATABASE:-ai_knowledge_db}

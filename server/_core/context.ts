@@ -1,17 +1,7 @@
 import type { CreateExpressContextOptions } from "@trpc/server/adapters/express";
 import type { User } from "../../drizzle/schema";
-const DEFAULT_USER: User = {
-  id: -1,
-  openId: "auth-disabled",
-  name: "Admin",
-  email: "admin@localhost",
-  passwordHash: null,
-  loginMethod: "disabled",
-  role: "admin",
-  createdAt: new Date(),
-  updatedAt: new Date(),
-  lastSignedIn: new Date(),
-};
+import { getAuthCookieName, verifyAuthToken } from "./auth";
+import { getUserById } from "../db";
 
 export type TrpcContext = {
   req: CreateExpressContextOptions["req"];
@@ -22,9 +12,19 @@ export type TrpcContext = {
 export async function createContext(
   opts: CreateExpressContextOptions
 ): Promise<TrpcContext> {
+  const rawCookie = opts.req.cookies?.[getAuthCookieName()];
+  let user: User | null = null;
+
+  if (typeof rawCookie === "string" && rawCookie.length > 0) {
+    const userId = await verifyAuthToken(rawCookie);
+    if (userId) {
+      user = (await getUserById(userId)) ?? null;
+    }
+  }
+
   return {
     req: opts.req,
     res: opts.res,
-    user: DEFAULT_USER,
+    user,
   };
 }

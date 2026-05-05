@@ -26,6 +26,10 @@ import {
 } from "./rag/textProcessing";
 import { buildContext } from "./rag/contextBuilder";
 import { rerankChunks } from "./rag/reranker";
+import {
+  buildDocumentAttachment,
+  findBestDocumentsByTitle,
+} from "./rag/documentDiscovery";
 import type {
   ContextSourceEntry,
   ContextTableEntry,
@@ -105,92 +109,6 @@ const BM25_B = 0.75;
 const TOKEN_CHAR_RATIO = 4;
 const sectionChunksCache = new Map<string, documentDb.ChunkBaseInfo[]>();
 const sectionFetchLocks = new Map<string, Promise<documentDb.ChunkBaseInfo[]>>();
-
-type BasicDocumentHit = {
-  id: number;
-  filename: string;
-  title: string | null;
-  fileType: string;
-  docType: DocumentType;
-  chunksCount: number;
-};
-
-function buildDocumentAttachment(doc: BasicDocumentHit) {
-  const base = `/api/documents/${doc.id}/file`;
-  return {
-    type: "document" as const,
-    documentId: doc.id,
-    filename: doc.filename,
-    title: doc.title,
-    fileType: doc.fileType,
-    docType: doc.docType,
-    previewUrl: base,
-    downloadUrl: `${base}?download=1`,
-  };
-}
-
-function scoreQueryToText(queryTokens: string[], queryNormalized: string, text: string): number {
-  const hay = (text || "").toLowerCase();
-  if (!hay) return 0;
-
-  let score = 0;
-  // Substring matches are strong signals for certificate names
-  for (const token of queryTokens) {
-    if (token.length < 3) continue;
-    if (hay.includes(token)) score += 2;
-  }
-  if (hay.includes(queryNormalized)) score += 4;
-
-  // Extra bonus for exact-ish phrase without spaces/punct
-  const compactHay = hay.replace(/[^a-z0-9а-яё]+/gi, "");
-  const compactQuery = queryNormalized.replace(/[^a-z0-9а-яё]+/gi, "");
-  if (compactQuery.length >= 5 && compactHay.includes(compactQuery)) score += 4;
-
-  return score;
-}
-
-async function findBestDocumentsByTitle(
-  query: string,
-  docType: DocumentType,
-  stopwords: Set<string>,
-  limit = 3
-): Promise<BasicDocumentHit[]> {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-
-  const queryNormalized = query.trim().toLowerCase();
-  const queryTokens = tokenize(queryNormalized, stopwords);
-
-  const candidates = await db
-    .select({
-      id: documents.id,
-      filename: documents.filename,
-      title: documents.title,
-      fileType: documents.fileType,
-      docType: documents.docType,
-      chunksCount: documents.chunksCount,
-    })
-    .from(documents)
-    .where(
-      sql`${documents.status} = 'indexed' AND ${documents.docType} = ${docType}`
-    )
-    .orderBy(desc(documents.createdAt))
-    .limit(50);
-
-  const scored = candidates
-    .map((d) => {
-      const title = d.title ?? "";
-      const name = `${title} ${d.filename}`.trim();
-      const score = scoreQueryToText(queryTokens, queryNormalized, name);
-      return { doc: d as BasicDocumentHit, score };
-    })
-    .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map((x) => x.doc);
-
-  return scored;
-}
 
 function cosineSimilarity(a: number[], b: number[]): number {
   if (!a.length || !b.length || a.length !== b.length) {

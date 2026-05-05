@@ -9,6 +9,8 @@ type AdminCredentials = {
   name: string;
 };
 
+const DEFAULT_ADMIN_PASSWORD = "admin123";
+
 function readAdminCredentials(): AdminCredentials {
   const defaultCreds: AdminCredentials = {
     email: process.env.ADMIN_EMAIL || "admin@admin.local",
@@ -39,6 +41,15 @@ function readAdminCredentials(): AdminCredentials {
  * Initialize database schema and default admin
  */
 export async function initializeDatabase() {
+  if (process.env.NODE_ENV === "production") {
+    const jwtSecret = process.env.JWT_SECRET?.trim();
+    if (!jwtSecret || jwtSecret.length < 32) {
+      throw new Error(
+        "JWT_SECRET must be configured and at least 32 characters in production"
+      );
+    }
+  }
+
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) {
     console.log("[DB Init] DATABASE_URL not set, skipping initialization");
@@ -92,6 +103,14 @@ export async function initializeDatabase() {
 
     console.log("[DB Init] Connected to database");
 
+    // In production, schema changes should come only from drizzle migrations.
+    const bootstrapSchema =
+      process.env.DB_SCHEMA_BOOTSTRAP === "true" ||
+      process.env.NODE_ENV !== "production";
+    if (!bootstrapSchema) {
+      console.log("[DB Init] Schema bootstrap disabled (using migrations only)");
+    }
+
     // Full schema creation (matches drizzle/schema.ts)
     const createStatements = [
       `
@@ -103,6 +122,7 @@ export async function initializeDatabase() {
         passwordHash VARCHAR(255),
         loginMethod VARCHAR(64),
         role ENUM('user', 'admin') NOT NULL DEFAULT 'user',
+        mustChangePassword BOOLEAN NOT NULL DEFAULT FALSE,
         createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         lastSignedIn TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -328,8 +348,10 @@ export async function initializeDatabase() {
       `,
     ];
 
-    for (const statement of createStatements) {
-      await connection.execute(statement);
+    if (bootstrapSchema) {
+      for (const statement of createStatements) {
+        await connection.execute(statement);
+      }
     }
 
     // Align existing tables with new columns/enums if database was created earlier
@@ -338,6 +360,7 @@ export async function initializeDatabase() {
       `ALTER TABLE users ADD COLUMN passwordHash VARCHAR(255);`,
       `ALTER TABLE users ADD COLUMN loginMethod VARCHAR(64);`,
       `ALTER TABLE users ADD COLUMN role ENUM('user','admin') NOT NULL DEFAULT 'user';`,
+      `ALTER TABLE users ADD COLUMN mustChangePassword BOOLEAN NOT NULL DEFAULT FALSE;`,
       `ALTER TABLE users ADD COLUMN lastSignedIn TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;`,
 
       // Ensure key enum columns exist even on older schemas
@@ -399,13 +422,15 @@ export async function initializeDatabase() {
       `ALTER TABLE llm_settings ADD COLUMN useQuickResponses BOOLEAN NOT NULL DEFAULT TRUE;`,
     ];
 
-    for (const statement of alterStatements) {
-      try {
-        await connection.execute(statement);
-      } catch (e: any) {
-        // Ignore "duplicate column/unknown" errors to stay idempotent
-        if (e?.errno !== 1060 && e?.errno !== 1267 && e?.errno !== 1291 && e?.errno !== 1146) {
-          console.warn("[DB Init] Warning applying alter:", e?.message || e);
+    if (bootstrapSchema) {
+      for (const statement of alterStatements) {
+        try {
+          await connection.execute(statement);
+        } catch (e: any) {
+          // Ignore "duplicate column/unknown" errors to stay idempotent
+          if (e?.errno !== 1060 && e?.errno !== 1267 && e?.errno !== 1291 && e?.errno !== 1146) {
+            console.warn("[DB Init] Warning applying alter:", e?.message || e);
+          }
         }
       }
     }
@@ -426,9 +451,17 @@ export async function initializeDatabase() {
       const passwordHash = crypto.createHash('sha256').update(adminPassword).digest('hex');
 
       const [result] = await connection.execute(
-        `INSERT INTO users (openId, name, email, passwordHash, loginMethod, role, lastSignedIn)
-         VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-        [openId, adminName, adminEmail, passwordHash, "email", "admin"]
+        `INSERT INTO users (openId, name, email, passwordHash, loginMethod, role, mustChangePassword, lastSignedIn)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [
+          openId,
+          adminName,
+          adminEmail,
+          passwordHash,
+          "email",
+          "admin",
+          adminPassword === DEFAULT_ADMIN_PASSWORD,
+        ]
       );
 
       adminId = (result as any).insertId;
@@ -438,6 +471,16 @@ export async function initializeDatabase() {
       console.log(`[DB Init] Password: ${adminPassword}`);
     } else {
       adminId = (rows as any)[0].id;
+      if (adminPassword === DEFAULT_ADMIN_PASSWORD) {
+        const defaultPasswordHash = crypto
+          .createHash("sha256")
+          .update(DEFAULT_ADMIN_PASSWORD)
+          .digest("hex");
+        await connection.execute(
+          "UPDATE users SET mustChangePassword = TRUE WHERE id = ? AND passwordHash = ?",
+          [adminId, defaultPasswordHash]
+        );
+      }
       console.log("[DB Init] Admin already exists");
     }
 

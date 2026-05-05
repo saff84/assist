@@ -85,6 +85,42 @@ docker compose up -d --build   # запустит mysql, weaviate, ollama, пр�
    corepack pnpm build   # Vite build + esbuild backend
    ```
 
+## Production deployment (external server)
+1. Заполните `.env` минимум следующими параметрами:
+   - `NODE_ENV=production`
+   - `PORT=80` (или внешний порт за reverse proxy)
+   - `APP_PUBLIC_PORT=80` (если запускаете через Docker Compose)
+   - `JWT_SECRET` длиной не менее 32 символов
+   - `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME`
+2. Примените миграции единым способом через Drizzle:
+   ```bash
+   corepack pnpm db:push
+   ```
+3. Соберите и запустите приложение:
+   ```bash
+   corepack pnpm build
+   corepack pnpm start
+   ```
+4. При первом входе под стандартным паролем (`admin123`) система принудительно откроет форму смены пароля.
+
+> Для production bootstrap схемы в рантайме отключен по умолчанию. Используйте миграции Drizzle как единственный путь изменения БД.
+
+### Защита входа (rate-limit / brute-force)
+- Для `auth.login` включено ограничение попыток: до 10 неуспешных попыток за 15 минут на комбинацию `IP + email`.
+- При превышении включается временная блокировка на 15 минут.
+- После успешного входа счетчик попыток для `IP + email` очищается.
+
+### Healthcheck для reverse proxy
+- Приложение отдает `GET /healthz` (HTTP 200 + JSON).
+- Готовые примеры:
+  - `deploy/nginx.conf`
+  - `deploy/Caddyfile`
+
+### Нужен ли IP в `.env`
+- Обычно **не нужен**. Приложение слушает `0.0.0.0`, поэтому доступно по любому IP интерфейса сервера.
+- Если работаете за Nginx/Caddy, внешний IP задается на уровне DNS/балансировщика/сетевых правил, а не в `.env`.
+- Включите `TRUST_PROXY=true`, если приложение стоит за reverse proxy и вам нужен корректный клиентский IP для rate-limit.
+
 ## Переменные окружения (из `env.example`)
 Ключевые параметры:
 - **База данных:** `DATABASE_URL`, `MYSQL_*`.

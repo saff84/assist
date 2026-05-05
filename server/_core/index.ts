@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
 import net from "net";
+import { parse as parseCookie } from "cookie";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerUploadRoutes } from "../uploadRouter";
 import { registerFaqImageRoutes } from "../faqImageRoutes";
@@ -35,10 +36,24 @@ async function startServer() {
 
   const app = express();
   const server = createServer(app);
+  if (process.env.TRUST_PROXY === "true") {
+    app.set("trust proxy", true);
+  }
   
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  app.use((req, _res, next) => {
+    req.cookies = parseCookie(req.headers.cookie || "");
+    next();
+  });
+  app.get("/healthz", (_req, res) => {
+    res.status(200).json({
+      ok: true,
+      service: "ai_knowledge_assistant",
+      ts: Date.now(),
+    });
+  });
   // File upload routes
   registerUploadRoutes(app);
   registerFaqImageRoutes(app);
@@ -58,14 +73,17 @@ async function startServer() {
   }
 
   const preferredPort = parseInt(process.env.PORT || "3000");
-  const port = await findAvailablePort(preferredPort);
+  const port =
+    process.env.NODE_ENV === "production"
+      ? preferredPort
+      : await findAvailablePort(preferredPort);
 
-  if (port !== preferredPort) {
+  if (process.env.NODE_ENV !== "production" && port !== preferredPort) {
     console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
 
-  server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}/`);
+  server.listen(port, "0.0.0.0", () => {
+    console.log(`Server running on 0.0.0.0:${port}`);
   });
 }
 

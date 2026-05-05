@@ -12,15 +12,14 @@ export default function UsersPage() {
           <div>
             <h1 className="text-3xl font-bold">User Management</h1>
             <p className="text-muted-foreground">
-              Авторизация отключена, поэтому дополнительных аккаунтов нет
+              Управление доступом и безопасность администратора
             </p>
           </div>
         </div>
 
         <Alert>
           <AlertDescription>
-            Приложение работает в режиме без аутентификации. Доступ ко всем разделам
-            всегда открыт, а встроенный админ создаётся автоматически при запуске.
+            На первом входе с дефолтным паролем система принудительно потребует смену пароля.
           </AlertDescription>
         </Alert>
 
@@ -28,18 +27,17 @@ export default function UsersPage() {
           <CardHeader>
             <CardTitle>Встроенный администратор</CardTitle>
             <CardDescription>
-              Этот аккаунт используется для всех операций в системе
+              Базовый администратор создается автоматически, если отсутствует
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
-            <p><span className="font-semibold text-foreground">Имя:</span> Admin User</p>
-            <p><span className="font-semibold text-foreground">Email:</span> admin@localhost</p>
+            <p><span className="font-semibold text-foreground">Имя:</span> задается через `ADMIN_NAME`</p>
+            <p><span className="font-semibold text-foreground">Email:</span> задается через `ADMIN_EMAIL`</p>
             <p>
               <span className="font-semibold text-foreground">Права:</span> Полный доступ к загрузке документов, настройкам и тестовой панели.
             </p>
             <p>
-              При необходимости можно реализовать собственную систему авторизации, но по умолчанию
-              никакой логин не требуется.
+              Для production задайте сильные значения `ADMIN_PASSWORD` и `JWT_SECRET`.
             </p>
           </CardContent>
         </Card>
