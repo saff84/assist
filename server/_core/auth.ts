@@ -45,8 +45,18 @@ export function getAuthCookieName(): string {
 }
 
 export function getCookieSecureFlag(): boolean {
+  const allowInsecureHttpAuth =
+    process.env.ALLOW_INSECURE_HTTP_AUTH?.trim().toLowerCase() === "true";
   const override = process.env.AUTH_COOKIE_SECURE?.trim().toLowerCase();
   if (override === "true") return true;
-  if (override === "false") return false;
+  if (override === "false") {
+    if (allowInsecureHttpAuth) return false;
+    if (process.env.NODE_ENV === "production") {
+      console.warn(
+        "[Auth] AUTH_COOKIE_SECURE=false ignored in production because ALLOW_INSECURE_HTTP_AUTH is not true"
+      );
+    }
+    return process.env.NODE_ENV === "production";
+  }
   return process.env.NODE_ENV === "production";
 }
