@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS product_items (
   INDEX product_items_document_idx (documentId),
   INDEX product_items_group_idx (groupId)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+--> statement-breakpoint
 
 ALTER TABLE manual_regions ADD COLUMN productItemId INT;
 

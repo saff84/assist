@@ -2,8 +2,10 @@
 
 ALTER TABLE `products`
   ADD COLUMN `groupId` INT NULL AFTER `sectionId`;
+--> statement-breakpoint
 
 CREATE INDEX `products_group_idx` ON `products` (`groupId`);
+--> statement-breakpoint
 
 CREATE TABLE `product_groups` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
@@ -18,6 +20,7 @@ CREATE TABLE `product_groups` (
   `updatedAt` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX `product_groups_document_idx` (`documentId`)
 );
+--> statement-breakpoint
 
 CREATE TABLE `document_annotations` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
@@ -34,6 +37,7 @@ CREATE TABLE `document_annotations` (
   INDEX `annotations_chunk_idx` (`documentId`, `chunkIndex`),
   INDEX `annotations_group_idx` (`productGroupId`)
 );
+--> statement-breakpoint
 
 CREATE TABLE `manual_regions` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,

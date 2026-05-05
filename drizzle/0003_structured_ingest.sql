@@ -6,6 +6,7 @@ ALTER TABLE `documents`
   ADD COLUMN `year` INT NULL AFTER `title`,
   ADD COLUMN `pages` INT NULL AFTER `year`,
   ADD COLUMN `tocJson` JSON NULL AFTER `documentMetadata`;
+--> statement-breakpoint
 
 ALTER TABLE `document_chunks`
   ADD COLUMN `pageNumber` INT NULL AFTER `tokenCount`,
@@ -14,6 +15,7 @@ ALTER TABLE `document_chunks`
   ADD COLUMN `tableJson` JSON NULL AFTER `elementType`,
   ADD COLUMN `language` VARCHAR(8) NOT NULL DEFAULT 'ru' AFTER `tableJson`,
   ADD COLUMN `bm25Terms` LONGTEXT NULL AFTER `language`;
+--> statement-breakpoint
 
 CREATE TABLE `sections` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
@@ -28,6 +30,7 @@ CREATE TABLE `sections` (
   INDEX `sections_document_idx` (`documentId`),
   INDEX `sections_sectionPath_idx` (`sectionPath`)
 );
+--> statement-breakpoint
 
 CREATE TABLE `products` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,

@@ -11,6 +11,7 @@ ALTER TABLE manual_regions
     'faq_answer',
     'certificate_answer'
   ) NOT NULL;
+--> statement-breakpoint
 
 ALTER TABLE manual_regions
   ADD COLUMN qaPairId INT NULL;

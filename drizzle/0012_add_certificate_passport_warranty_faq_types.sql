@@ -13,6 +13,7 @@ ALTER TABLE `documents`
     'passport',
     'warranty_faq'
   ) NOT NULL DEFAULT 'general';
+--> statement-breakpoint
 
 ALTER TABLE `documents`
   MODIFY COLUMN `docType` ENUM(
