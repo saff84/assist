@@ -111,6 +111,21 @@ export async function initializeDatabase() {
       console.log("[DB Init] Schema bootstrap disabled (using migrations only)");
     }
 
+    const execStatementsSafely = async (
+      statements: string[],
+      allowedErrnos: number[] = [1060, 1061, 1267, 1291, 1146, 1050]
+    ) => {
+      for (const statement of statements) {
+        try {
+          await connection.execute(statement);
+        } catch (e: any) {
+          if (!allowedErrnos.includes(e?.errno)) {
+            throw e;
+          }
+        }
+      }
+    };
+
     // Full schema creation (matches drizzle/schema.ts)
     const createStatements = [
       `
@@ -349,9 +364,7 @@ export async function initializeDatabase() {
     ];
 
     if (bootstrapSchema) {
-      for (const statement of createStatements) {
-        await connection.execute(statement);
-      }
+      await execStatementsSafely(createStatements, [1050]);
     }
 
     // Align existing tables with new columns/enums if database was created earlier
@@ -423,17 +436,59 @@ export async function initializeDatabase() {
     ];
 
     if (bootstrapSchema) {
-      for (const statement of alterStatements) {
-        try {
-          await connection.execute(statement);
-        } catch (e: any) {
-          // Ignore "duplicate column/unknown" errors to stay idempotent
-          if (e?.errno !== 1060 && e?.errno !== 1267 && e?.errno !== 1291 && e?.errno !== 1146) {
-            console.warn("[DB Init] Warning applying alter:", e?.message || e);
-          }
-        }
-      }
+      await execStatementsSafely(alterStatements);
     }
+
+    // Critical compatibility guardrails:
+    // even in migration-only mode we must have auth/settings tables and required columns
+    // so runtime init does not crash if a prior migration chain is partial.
+    await execStatementsSafely([
+      `
+      CREATE TABLE IF NOT EXISTS users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        openId VARCHAR(64) NOT NULL UNIQUE,
+        name TEXT,
+        email VARCHAR(320) UNIQUE,
+        passwordHash VARCHAR(255),
+        loginMethod VARCHAR(64),
+        role ENUM('user', 'admin') NOT NULL DEFAULT 'user',
+        mustChangePassword BOOLEAN NOT NULL DEFAULT FALSE,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        lastSignedIn TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX email_idx (email)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `,
+      `
+      CREATE TABLE IF NOT EXISTS system_prompts (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        prompt LONGTEXT NOT NULL,
+        version INT NOT NULL DEFAULT 1,
+        createdBy INT NOT NULL,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        isActive BOOLEAN NOT NULL DEFAULT TRUE,
+        INDEX isActive_idx (isActive)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `,
+      `
+      CREATE TABLE IF NOT EXISTS llm_settings (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        provider ENUM('local','external') NOT NULL DEFAULT 'local',
+        externalApiUrl VARCHAR(512) DEFAULT 'https://openrouter.ai/api/v1',
+        externalApiKey TEXT,
+        externalModel VARCHAR(128) DEFAULT 'anthropic/claude-sonnet-4',
+        useQuickResponses BOOLEAN NOT NULL DEFAULT TRUE,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `,
+      `ALTER TABLE users ADD COLUMN passwordHash VARCHAR(255);`,
+      `ALTER TABLE users ADD COLUMN loginMethod VARCHAR(64);`,
+      `ALTER TABLE users ADD COLUMN role ENUM('user','admin') NOT NULL DEFAULT 'user';`,
+      `ALTER TABLE users ADD COLUMN mustChangePassword BOOLEAN NOT NULL DEFAULT FALSE;`,
+      `ALTER TABLE users ADD COLUMN lastSignedIn TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;`,
+      `ALTER TABLE llm_settings ADD COLUMN useQuickResponses BOOLEAN NOT NULL DEFAULT TRUE;`,
+    ]);
 
     // Check if admin exists
     const { email: adminEmail, password: adminPassword, name: adminName } = readAdminCredentials();
