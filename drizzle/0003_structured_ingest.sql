@@ -1,7 +1,9 @@
 -- Migration: structured ingest enhancements
 
 ALTER TABLE `documents`
-  ADD COLUMN `docType` ENUM('catalog', 'manual', 'other') NOT NULL DEFAULT 'other' AFTER `status`,
+  ADD COLUMN `processingType` ENUM('simple','structured','manual','general','instruction','catalog') NOT NULL DEFAULT 'general' AFTER `s3Key`,
+  ADD COLUMN `documentMetadata` JSON NULL AFTER `processingType`,
+  ADD COLUMN `docType` ENUM('catalog', 'manual', 'other') NOT NULL DEFAULT 'other' AFTER `documentMetadata`,
   ADD COLUMN `title` VARCHAR(512) NULL AFTER `docType`,
   ADD COLUMN `year` INT NULL AFTER `title`,
   ADD COLUMN `pages` INT NULL AFTER `year`,
