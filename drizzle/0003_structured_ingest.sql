@@ -1,11 +1,11 @@
 -- Migration: structured ingest enhancements
 
 ALTER TABLE `documents`
-  ADD COLUMN `docType` ENUM('catalog', 'manual', 'other') NOT NULL DEFAULT 'other' AFTER `processingType`,
+  ADD COLUMN `docType` ENUM('catalog', 'manual', 'other') NOT NULL DEFAULT 'other' AFTER `status`,
   ADD COLUMN `title` VARCHAR(512) NULL AFTER `docType`,
   ADD COLUMN `year` INT NULL AFTER `title`,
   ADD COLUMN `pages` INT NULL AFTER `year`,
-  ADD COLUMN `tocJson` JSON NULL AFTER `documentMetadata`;
+  ADD COLUMN `tocJson` JSON NULL AFTER `pages`;
 --> statement-breakpoint
 
 ALTER TABLE `document_chunks`
