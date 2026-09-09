@@ -1,39 +1,27 @@
 import { useState, useRef, useEffect } from "react";
-import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, Send, X, MessageCircle } from "lucide-react";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
+import { WidgetApiClient, type WidgetAttachment, type WidgetDocumentType } from "@/widget/api";
 
 interface Message {
   id: string;
   type: "user" | "assistant";
   content: string;
-  attachments?: Array<{
-    type: "document";
-    documentId: number;
-    filename: string;
-    title?: string | null;
-    fileType: string;
-    docType: "catalog" | "instruction" | "general" | "certificate" | "passport" | "warranty_faq";
-    previewUrl: string;
-    downloadUrl: string;
-  }>;
+  attachments?: WidgetAttachment[];
 }
 
 type ChatTopic = "products" | "certificates" | "passports" | "warranty";
-type ForcedDocType = "catalog" | "certificate" | "passport" | "warranty_faq";
+type ForcedDocType = Exclude<WidgetDocumentType, "instruction" | "general">;
 
 export interface WebChatWidgetProps {
   title?: string;
   subtitle?: string;
   position?: "bottom-right" | "bottom-left";
+  apiBaseUrl?: string;
 }
 
-/**
- * Web Chat Widget Component
- * Can be embedded on any website to provide AI assistant chat
- */
 type ProcessingStage = "idle" | "search" | "think" | "type";
 const stageOrder: ProcessingStage[] = ["search", "think", "type"];
 const stageLabels: Record<Exclude<ProcessingStage, "idle">, string> = {
@@ -41,6 +29,7 @@ const stageLabels: Record<Exclude<ProcessingStage, "idle">, string> = {
   think: "Думаю",
   type: "Печатаю",
 };
+
 const stageLabel = (stage: ProcessingStage) => {
   switch (stage) {
     case "search":
@@ -54,45 +43,55 @@ const stageLabel = (stage: ProcessingStage) => {
   }
 };
 
+function resolveApiBaseUrl(apiBaseUrl?: string): string {
+  if (apiBaseUrl?.trim()) {
+    return apiBaseUrl.trim().replace(/\/+$/, "");
+  }
+  if (typeof window !== "undefined") {
+    return window.location.origin;
+  }
+  return "";
+}
+
 export function WebChatWidget({
   title = "AI Assistant",
   subtitle = "Ask me anything",
   position = "bottom-right",
+  apiBaseUrl,
 }: WebChatWidgetProps) {
+  const resolvedApiBaseUrl = resolveApiBaseUrl(apiBaseUrl);
+  const widgetApi = useRef(new WidgetApiClient(resolvedApiBaseUrl));
+
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sessionId] = useState(() => `session-${Date.now()}-${Math.random()}`);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [processingStage, setProcessingStage] = useState<ProcessingStage>("idle");
+  const [isSending, setIsSending] = useState(false);
   const stageTimers = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const [topic, setTopic] = useState<ChatTopic | null>(null);
   const [forceDocumentType, setForceDocumentType] = useState<ForcedDocType | null>(null);
-
-  const { data: availableTopics } = trpc.document.getAvailableChatTopics.useQuery(undefined, {
-    staleTime: 60_000,
-    refetchOnWindowFocus: false,
+  const [availableTopics, setAvailableTopics] = useState({
+    hasCertificates: false,
+    hasPassports: false,
+    hasWarrantyFaq: false,
   });
 
-  // Ask assistant mutation
-  const askMutation = trpc.document.askAssistant.useMutation({
-    onSuccess: (response) => {
-      setProcessingStage("type");
-      setTimeout(() => setProcessingStage("idle"), 400);
-      const assistantMessage: Message = {
-        id: `msg-${Date.now()}`,
-        type: "assistant",
-        content: response.response,
-        attachments: response.attachments ?? [],
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
-    },
-    onError: () => {
-      setProcessingStage("idle");
-    },
-  });
+  useEffect(() => {
+    widgetApi.current = new WidgetApiClient(resolvedApiBaseUrl);
+    widgetApi.current
+      .getTopics()
+      .then(setAvailableTopics)
+      .catch(() => {
+        setAvailableTopics({
+          hasCertificates: false,
+          hasPassports: false,
+          hasWarrantyFaq: false,
+        });
+      });
+  }, [resolvedApiBaseUrl]);
 
-  // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -104,20 +103,34 @@ export function WebChatWidget({
     []
   );
 
-  const handleSendMessage = () => {
-    if (!input.trim() || processingStage !== "idle" || !forceDocumentType) return;
+  const appendAssistantMessage = (content: string, attachments: WidgetAttachment[] = []) => {
+    setProcessingStage("type");
+    setTimeout(() => setProcessingStage("idle"), 400);
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `msg-${Date.now()}`,
+        type: "assistant",
+        content,
+        attachments,
+      },
+    ]);
+  };
 
-    // Add user message
+  const handleSendMessage = async () => {
+    if (!input.trim() || processingStage !== "idle" || !forceDocumentType || isSending) return;
+
     const userMessage: Message = {
       id: `msg-${Date.now()}`,
       type: "user",
       content: input,
     };
+    const query = input;
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
 
-    // Send to assistant
     setProcessingStage("search");
+    setIsSending(true);
     stageTimers.current.forEach((timer) => clearTimeout(timer));
     stageTimers.current = [
       setTimeout(() => {
@@ -129,20 +142,29 @@ export function WebChatWidget({
         );
       }, 3500),
     ];
-    askMutation.mutate(
-      {
-      query: input,
-      sessionId,
-      source: "website",
-      forceDocumentType,
-      },
-      {
-        onSettled: () => {
-          stageTimers.current.forEach((timer) => clearTimeout(timer));
-          stageTimers.current = [];
+
+    try {
+      const response = await widgetApi.current.askAssistant({
+        query,
+        sessionId,
+        forceDocumentType,
+      });
+      appendAssistantMessage(response.response, response.attachments ?? []);
+    } catch {
+      setProcessingStage("idle");
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `msg-${Date.now()}`,
+          type: "assistant",
+          content: "Не удалось получить ответ. Попробуйте ещё раз.",
         },
-      }
-    );
+      ]);
+    } finally {
+      stageTimers.current.forEach((timer) => clearTimeout(timer));
+      stageTimers.current = [];
+      setIsSending(false);
+    }
   };
 
   const handlePickTopic = (picked: ChatTopic) => {
@@ -165,7 +187,7 @@ export function WebChatWidget({
           ? "Уточните, пожалуйста: по какому товару (артикул/наименование) нужен сертификат и какой именно (например, соответствия/пожарный/гигиенический)?"
           : picked === "passports"
             ? "Уточните, пожалуйста: по какому изделию/модели нужен паспорт и какой раздел/параметры вас интересуют?"
-          : "Уточните, пожалуйста: по какому товару (артикул/наименование) вопрос по гарантии и в чём суть обращения (симптом/проблема/дата покупки)?";
+            : "Уточните, пожалуйста: по какому товару (артикул/наименование) вопрос по гарантии и в чём суть обращения (симптом/проблема/дата покупки)?";
 
     setMessages((prev) => [
       ...prev,
@@ -183,7 +205,7 @@ export function WebChatWidget({
     return (
       <button
         onClick={() => setIsOpen(true)}
-        className={`fixed ${positionClasses} z-50 p-4 bg-primary text-primary-foreground rounded-full shadow-lg hover:shadow-xl transition-shadow`}
+        className={`fixed ${positionClasses} z-[2147483000] p-4 bg-primary text-primary-foreground rounded-full shadow-lg hover:shadow-xl transition-shadow`}
         aria-label="Open chat"
       >
         <MessageCircle className="w-6 h-6" />
@@ -193,9 +215,8 @@ export function WebChatWidget({
 
   return (
     <div
-      className={`fixed ${positionClasses} z-50 w-96 h-96 bg-background border rounded-lg shadow-xl flex flex-col min-h-0 overflow-hidden`}
+      className={`fixed ${positionClasses} z-[2147483000] w-96 h-[32rem] max-h-[calc(100vh-2rem)] bg-background border rounded-lg shadow-xl flex flex-col min-h-0 overflow-hidden`}
     >
-      {/* Header */}
       <div className="bg-primary text-primary-foreground p-4 rounded-t-lg flex justify-between items-center">
         <div>
           <h3 className="font-semibold">{title}</h3>
@@ -209,27 +230,24 @@ export function WebChatWidget({
           <X className="w-4 h-4" />
         </button>
       </div>
+
       {processingStage !== "idle" && (
         <div className="px-4 py-1 border-b">
           <ProcessingTimeline stage={processingStage} />
         </div>
       )}
-        {askMutation.isPending && (
-          <div className="flex justify-start">
-            <div className="w-full px-3 py-2 rounded-lg bg-muted text-foreground">
-              <div className="flex items-center gap-2 text-sm">
-                <Loader2 className="w-3 h-3 animate-spin" />
-                <span>
-                  {stageLabel(
-                    processingStage === "idle" ? "think" : processingStage
-                  )}
-                </span>
-              </div>
+
+      {isSending && (
+        <div className="flex justify-start px-4 pt-2">
+          <div className="w-full px-3 py-2 rounded-lg bg-muted text-foreground">
+            <div className="flex items-center gap-2 text-sm">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              <span>{stageLabel(processingStage === "idle" ? "think" : processingStage)}</span>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-      {/* Messages */}
       <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
         {messages.length === 0 ? (
           <div className="space-y-3">
@@ -249,7 +267,7 @@ export function WebChatWidget({
                   >
                     Вопрос по: Товарам
                   </Button>
-                  {availableTopics?.hasCertificates && (
+                  {availableTopics.hasCertificates && (
                     <Button
                       type="button"
                       size="sm"
@@ -260,7 +278,7 @@ export function WebChatWidget({
                       Вопрос по: Сертификатам
                     </Button>
                   )}
-                  {availableTopics?.hasPassports && (
+                  {availableTopics.hasPassports && (
                     <Button
                       type="button"
                       size="sm"
@@ -271,7 +289,7 @@ export function WebChatWidget({
                       Вопрос по: Паспортам
                     </Button>
                   )}
-                  {availableTopics?.hasWarrantyFaq && (
+                  {availableTopics.hasWarrantyFaq && (
                     <Button
                       type="button"
                       size="sm"
@@ -287,7 +305,11 @@ export function WebChatWidget({
             </div>
 
             <div className="flex items-center justify-center h-48 text-muted-foreground text-xs">
-              <p>{forceDocumentType ? "Теперь ответьте на уточняющий вопрос выше и отправьте сообщение." : "Сначала выберите тематику."}</p>
+              <p>
+                {forceDocumentType
+                  ? "Теперь ответьте на уточняющий вопрос выше и отправьте сообщение."
+                  : "Сначала выберите тематику."}
+              </p>
             </div>
           </div>
         ) : (
@@ -320,54 +342,29 @@ export function WebChatWidget({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
       <div className="border-t p-3 flex gap-2">
         <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
+          onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
           placeholder={forceDocumentType ? "Введите сообщение..." : "Выберите тематику выше..."}
-          disabled={askMutation.isPending || processingStage !== "idle" || !forceDocumentType}
+          disabled={isSending || processingStage !== "idle" || !forceDocumentType}
           className="text-sm"
         />
         <Button
           onClick={handleSendMessage}
-          disabled={!input.trim() || askMutation.isPending || processingStage !== "idle" || !forceDocumentType}
+          disabled={!input.trim() || isSending || processingStage !== "idle" || !forceDocumentType}
           size="sm"
           className="gap-1"
         >
-          {askMutation.isPending ? (
-            <Loader2 className="w-3 h-3 animate-spin" />
-          ) : (
-            <Send className="w-3 h-3" />
-          )}
+          {isSending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
         </Button>
       </div>
     </div>
   );
 }
 
-/**
- * Export widget as standalone script
- * Usage: <script src="https://your-domain.com/chat-widget.js"></script>
- */
-export function initWebChatWidget(elementId: string, options?: WebChatWidgetProps) {
-  const element = document.getElementById(elementId);
-  if (!element) {
-    console.error(`Element with id "${elementId}" not found`);
-    return;
-  }
-
-  // This would be rendered by React in a real implementation
-  // For now, this is a placeholder for integration
-  console.log("Web chat widget initialized", { elementId, options });
-}
-
-function MessageAttachments({
-  attachments,
-}: {
-  attachments: NonNullable<Message["attachments"]>;
-}) {
+function MessageAttachments({ attachments }: { attachments: WidgetAttachment[] }) {
   const docs = attachments.filter((a) => a.type === "document");
   if (!docs.length) return null;
 
@@ -376,8 +373,7 @@ function MessageAttachments({
       {docs.map((doc) => {
         const title = (doc.title && doc.title.trim()) || doc.filename;
         const isPdf =
-          doc.fileType.toLowerCase() === "pdf" ||
-          doc.filename.toLowerCase().endsWith(".pdf");
+          doc.fileType.toLowerCase() === "pdf" || doc.filename.toLowerCase().endsWith(".pdf");
 
         return (
           <div key={`${doc.type}-${doc.documentId}`} className="rounded-md border bg-background/60 p-2">

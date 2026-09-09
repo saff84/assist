@@ -6,10 +6,12 @@ import { parse as parseCookie } from "cookie";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerUploadRoutes } from "../uploadRouter";
 import { registerFaqImageRoutes } from "../faqImageRoutes";
+import { registerWidgetRoutes } from "../widgetRoutes";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { initializeDatabase } from "../initDatabase";
+import { widgetCorsMiddleware } from "./widgetCors";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -54,6 +56,8 @@ async function startServer() {
       ts: Date.now(),
     });
   });
+  app.use(widgetCorsMiddleware);
+  registerWidgetRoutes(app);
   // File upload routes
   registerUploadRoutes(app);
   registerFaqImageRoutes(app);

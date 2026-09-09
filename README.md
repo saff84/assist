@@ -121,6 +121,54 @@ docker compose up -d --build   # запустит mysql, weaviate, ollama, пр�
 - Если работаете за Nginx/Caddy, внешний IP задается на уровне DNS/балансировщика/сетевых правил, а не в `.env`.
 - Включите `TRUST_PROXY=true`, если приложение стоит за reverse proxy и вам нужен корректный клиентский IP для rate-limit.
 
+### Встраивание чата на сторонний сайт (JS-виджет)
+
+После сборки приложения доступны файлы:
+- `chat-widget.js`
+- `chat-widget.css`
+
+Подключение на внешнем сайте:
+
+```html
+<script
+  src="http://ВАШ_IP/chat-widget.js"
+  data-api-url="http://ВАШ_IP"
+  data-title="SANEXT Assistant"
+  data-subtitle="Задайте вопрос по товарам"
+  data-position="bottom-right"
+  defer
+></script>
+```
+
+CSS подключается автоматически из `chat-widget.css` рядом со скриптом.
+При необходимости можно подключить вручную:
+
+```html
+<link rel="stylesheet" href="http://ВАШ_IP/chat-widget.css" />
+```
+
+Программный запуск:
+
+```html
+<script src="http://ВАШ_IP/chat-widget.js" data-auto-init="false" defer></script>
+<script>
+  window.SanextChatWidget.init({
+    apiBaseUrl: "http://ВАШ_IP",
+    title: "SANEXT Assistant",
+    subtitle: "Задайте вопрос по товарам",
+    position: "bottom-right",
+  });
+</script>
+```
+
+Публичные API виджета:
+- `GET /api/widget/topics`
+- `POST /api/widget/chat`
+
+CORS управляется через `WIDGET_ALLOWED_ORIGINS` (например `https://shop.example.com,https://www.shop.example.com` или `*` для теста).
+
+Демо-страница: `http://ВАШ_IP/widget-demo.html`
+
 ## Переменные окружения (из `env.example`)
 Ключевые параметры:
 - **База данных:** `DATABASE_URL`, `MYSQL_*`.

@@ -121,6 +121,7 @@ services:
       
       # Bitrix24 (optional)
       BITRIX24_WEBHOOK_URL: ${BITRIX24_WEBHOOK_URL}
+      WIDGET_ALLOWED_ORIGINS: ${WIDGET_ALLOWED_ORIGINS:-*}
     volumes:
       - ./client/src:/app/client/src
       - ./server:/app/server
