@@ -502,25 +502,38 @@ export async function initializeDatabase() {
       `ALTER TABLE llm_settings ADD COLUMN useQuickResponses BOOLEAN NOT NULL DEFAULT TRUE;`,
     ]);
 
-    // Role migration: never demote existing admin; legacy "user" -> editor
-    await execStatementsSafely([
-      `ALTER TABLE users MODIFY COLUMN role ENUM('user','admin','editor') NOT NULL DEFAULT 'user'`,
-    ]);
+    // Role migration: never demote existing admin; legacy "user" -> editor.
+    // Must not crash app startup if enum already migrated or values are mixed.
+    try {
+      await connection.execute(
+        `ALTER TABLE users MODIFY COLUMN role ENUM('user','admin','editor') NOT NULL DEFAULT 'user'`
+      );
+    } catch (error: any) {
+      console.warn("[DB Init] Role enum expand skipped:", error?.code || error?.message || error);
+    }
     try {
       const [roleUpdate] = await connection.execute(
-        `UPDATE users SET role = 'editor' WHERE role = 'user'`
+        `UPDATE users SET role = 'editor' WHERE role = 'user' OR role IS NULL OR role = ''`
       );
       console.log(
         "[DB Init] Role migration user->editor:",
         (roleUpdate as { affectedRows?: number })?.affectedRows ?? 0,
         "row(s)"
       );
-    } catch (error) {
-      console.warn("[DB Init] Role migration UPDATE skipped/failed:", error);
+    } catch (error: any) {
+      console.warn("[DB Init] Role migration UPDATE skipped:", error?.code || error?.message || error);
     }
-    await execStatementsSafely([
-      `ALTER TABLE users MODIFY COLUMN role ENUM('admin','editor') NOT NULL DEFAULT 'editor'`,
-    ]);
+    try {
+      // Ensure every remaining non-admin row is a valid editor before shrinking enum
+      await connection.execute(
+        `UPDATE users SET role = 'editor' WHERE role NOT IN ('admin', 'editor')`
+      );
+      await connection.execute(
+        `ALTER TABLE users MODIFY COLUMN role ENUM('admin','editor') NOT NULL DEFAULT 'editor'`
+      );
+    } catch (error: any) {
+      console.warn("[DB Init] Role enum finalize skipped:", error?.code || error?.message || error);
+    }
 
     // Check if admin exists
     const { email: adminEmail, password: adminPassword, name: adminName } = readAdminCredentials();
@@ -553,7 +566,7 @@ export async function initializeDatabase() {
 
       adminId = (result as any).insertId;
 
-      console.log("[DB Init] вњ… Default admin created!");
+      console.log("[DB Init] Default admin created!");
       console.log(`[DB Init] Email: ${adminEmail}`);
       console.log(`[DB Init] Password: ${adminPassword}`);
     } else {
@@ -578,31 +591,31 @@ export async function initializeDatabase() {
 
     if (Array.isArray(promptRows) && promptRows.length === 0) {
       // Create default system prompt
-      const defaultPrompt = `Р’С‹ - РїСЂРѕС„РµСЃСЃРёРѕРЅР°Р»СЊРЅС‹Р№ AI-Р°СЃСЃРёСЃС‚РµРЅС‚ Р±Р°Р·С‹ Р·РЅР°РЅРёР№.
+      const defaultPrompt = `Вы - профессиональный AI-ассистент базы знаний.
 
-Р’РђРЁРђ Р РћР›Р¬:
-- РџРѕРјРѕРіР°РµС‚Рµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏРј РЅР°С…РѕРґРёС‚СЊ РёРЅС„РѕСЂРјР°С†РёСЋ РІ Р·Р°РіСЂСѓР¶РµРЅРЅС‹С… РґРѕРєСѓРјРµРЅС‚Р°С…
-- РћС‚РІРµС‡Р°РµС‚Рµ С‚РѕС‡РЅРѕ, РѕРїРёСЂР°СЏСЃСЊ С‚РѕР»СЊРєРѕ РЅР° РїСЂРµРґРѕСЃС‚Р°РІР»РµРЅРЅС‹Р№ РєРѕРЅС‚РµРєСЃС‚
-- РћР±С‰Р°РµС‚РµСЃСЊ РїСЂРѕС„РµСЃСЃРёРѕРЅР°Р»СЊРЅРѕ, РЅРѕ РґСЂСѓР¶РµР»СЋР±РЅРѕ
+ВАША РОЛЬ:
+- Помогаете пользователям находить информацию в загруженных документах
+- Отвечаете точно, опираясь только на предоставленный контекст
+- Общаетесь профессионально, но дружелюбно
 
-РџР РђР’РР›Рђ РћРўР’Р•РўРћР’:
-1. РСЃРїРѕР»СЊР·СѓР№С‚Рµ С‚РѕР»СЊРєРѕ РёРЅС„РѕСЂРјР°С†РёСЋ РёР· РїСЂРµРґРѕСЃС‚Р°РІР»РµРЅРЅРѕРіРѕ РєРѕРЅС‚РµРєСЃС‚Р°
-2. Р•СЃР»Рё РёРЅС„РѕСЂРјР°С†РёРё РЅРµС‚ РІ РєРѕРЅС‚РµРєСЃС‚Рµ - С‡РµСЃС‚РЅРѕ СЃРєР°Р¶РёС‚Рµ РѕР± СЌС‚РѕРј
-3. Р¦РёС‚РёСЂСѓР№С‚Рµ РєРѕРЅРєСЂРµС‚РЅС‹Рµ С„СЂР°РіРјРµРЅС‚С‹ РёР· РґРѕРєСѓРјРµРЅС‚РѕРІ, РєРѕРіРґР° СЌС‚Рѕ СѓРјРµСЃС‚РЅРѕ
-4. РЎС‚СЂСѓРєС‚СѓСЂРёСЂСѓР№С‚Рµ РѕС‚РІРµС‚С‹: РёСЃРїРѕР»СЊР·СѓР№С‚Рµ СЃРїРёСЃРєРё, Р·Р°РіРѕР»РѕРІРєРё, РІС‹РґРµР»РµРЅРёСЏ
-5. Р•СЃР»Рё РІРѕРїСЂРѕСЃ РЅРµСЏСЃРµРЅ - РїРѕРїСЂРѕСЃРёС‚Рµ СѓС‚РѕС‡РЅРёС‚СЊ
+ПРАВИЛА ОТВЕТОВ:
+1. Используйте только информацию из предоставленного контекста
+2. Если информации нет в контексте - честно скажите об этом
+3. Цитируйте конкретные фрагменты из документов, когда это уместно
+4. Структурируйте ответы: используйте списки, заголовки, выделения
+5. Если вопрос неясен - попросите уточнить
 
-РЎРўРР›Р¬ РћР‘Р©Р•РќРРЇ:
-- РџСЂРѕС„РµСЃСЃРёРѕРЅР°Р»СЊРЅС‹Р№, РЅРѕ РЅРµ С„РѕСЂРјР°Р»СЊРЅС‹Р№
-- РљСЂР°С‚РєРёР№, РЅРѕ РёРЅС„РѕСЂРјР°С‚РёРІРЅС‹Р№
-- РџРѕРЅСЏС‚РЅС‹Р№ РЅРµСЃРїРµС†РёР°Р»РёСЃС‚Р°Рј
-- Р‘РµР· РЅРµРЅСѓР¶РЅС‹С… РІРІРѕРґРЅС‹С… С„СЂР°Р·
+СТИЛЬ ОБЩЕНИЯ:
+- Профессиональный, но не формальный
+- Краткий, но информативный
+- Понятный неспециалистам
+- Без ненужных вводных фраз
 
-РћР“Р РђРќРР§Р•РќРРЇ:
-- РќРµ РІС‹РґСѓРјС‹РІР°Р№С‚Рµ РёРЅС„РѕСЂРјР°С†РёСЋ
-- РќРµ РґР°РІР°Р№С‚Рµ РјРµРґРёС†РёРЅСЃРєРёРµ, СЋСЂРёРґРёС‡РµСЃРєРёРµ РёР»Рё С„РёРЅР°РЅСЃРѕРІС‹Рµ СЃРѕРІРµС‚С‹
-- РќРµ РѕР±СЃСѓР¶РґР°Р№С‚Рµ РїРѕР»РёС‚РёРєСѓ РёР»Рё СЂРµР»РёРіРёСЋ
-- РќРµ РїСЂРµРґРѕСЃС‚Р°РІР»СЏР№С‚Рµ Р»РёС‡РЅСѓСЋ РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ Р»СЋРґСЏС…`;
+ОГРАНИЧЕНИЯ:
+- Не выдумывайте информацию
+- Не давайте медицинские, юридические или финансовые советы
+- Не обсуждайте политику или религию
+- Не предоставляйте личную информацию о людях`;
 
       await connection.execute(
         `INSERT INTO system_prompts (prompt, version, createdBy, isActive)
@@ -610,7 +623,7 @@ export async function initializeDatabase() {
         [defaultPrompt, 1, adminId]
       );
 
-      console.log("[DB Init] вњ… Default system prompt created!");
+      console.log("[DB Init] Default system prompt created!");
     } else {
       console.log("[DB Init] System prompt already exists");
     }
@@ -621,7 +634,7 @@ export async function initializeDatabase() {
       await connection.execute(
         `INSERT INTO llm_settings (provider, externalApiUrl, externalModel) VALUES ('local', 'https://openrouter.ai/api/v1', 'anthropic/claude-sonnet-4')`
       );
-      console.log("[DB Init] вњ… Default LLM settings created (local provider)");
+      console.log("[DB Init] Default LLM settings created (local provider)");
     }
 
     await connection.end();
