@@ -4,6 +4,7 @@ import * as documentDb from "./documentDb";
 import * as faqDb from "./faqDb";
 import * as ragModule from "./ragModule";
 import { applyWidgetCors } from "./_core/widgetCors";
+import { trackWidgetOrigin } from "./widgetSitesDb";
 
 const chatInputSchema = z.object({
   query: z.string().min(1),
@@ -19,6 +20,8 @@ export function registerWidgetRoutes(app: Express) {
       res.status(403).json({ error: "Origin is not allowed" });
       return;
     }
+
+    void trackWidgetOrigin(req.headers.origin, "topics");
 
     try {
       const availability = await documentDb.getDocTypeAvailability([
@@ -54,6 +57,8 @@ export function registerWidgetRoutes(app: Express) {
       res.status(400).json({ error: "Invalid request", details: parsed.error.flatten() });
       return;
     }
+
+    void trackWidgetOrigin(req.headers.origin, "chat");
 
     try {
       const response = await ragModule.processRAGQuery(

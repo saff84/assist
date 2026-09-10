@@ -22,7 +22,7 @@ export const users = mysqlTable("users", {
   email: varchar("email", { length: 320 }).unique(),
   passwordHash: varchar("passwordHash", { length: 255 }), // For email/password auth
   loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
+  role: mysqlEnum("role", ["admin", "editor"]).default("editor").notNull(),
   mustChangePassword: boolean("mustChangePassword").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -483,6 +483,27 @@ export const queryStats = mysqlTable(
 
 export type QueryStat = typeof queryStats.$inferSelect;
 export type InsertQueryStat = typeof queryStats.$inferInsert;
+
+/**
+ * Widget embed sites observed via Origin header on /api/widget/*
+ */
+export const widgetSites = mysqlTable(
+  "widget_sites",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    origin: varchar("origin", { length: 512 }).notNull().unique(),
+    requestCount: int("requestCount").default(0).notNull(),
+    chatCount: int("chatCount").default(0).notNull(),
+    firstSeenAt: timestamp("firstSeenAt").defaultNow().notNull(),
+    lastSeenAt: timestamp("lastSeenAt").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => ({
+    originIdx: index("widget_sites_origin_idx").on(table.origin),
+  })
+);
+
+export type WidgetSite = typeof widgetSites.$inferSelect;
+export type InsertWidgetSite = typeof widgetSites.$inferInsert;
 
 /**
  * LLM settings table

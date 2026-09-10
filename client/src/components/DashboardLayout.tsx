@@ -21,19 +21,20 @@ import {
 } from "@/components/ui/sidebar";
 import { APP_LOGO, APP_TITLE } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, LogOut, PanelLeft, FileText, Settings, MessageSquare, BarChart3, Users, HelpCircle, Bot } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, FileText, Settings, MessageSquare, BarChart3, Users, HelpCircle, Bot, Code2 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 
 const menuItems = [
-  { icon: LayoutDashboard, label: "Dashboard", path: "/" },
-  { icon: FileText, label: "Documents", path: "/documents" },
-  { icon: HelpCircle, label: "FAQ Chunks", path: "/faq-chunks" },
-  { icon: Settings, label: "Prompt Editor", path: "/prompt-editor" },
-  { icon: Bot, label: "LLM", path: "/llm-settings" },
-  { icon: MessageSquare, label: "Test Panel", path: "/test-panel" },
-  { icon: BarChart3, label: "Statistics", path: "/statistics" },
-  { icon: Users, label: "Users", path: "/users" },
+  { icon: LayoutDashboard, label: "Dashboard", path: "/", roles: ["admin", "editor"] as const },
+  { icon: FileText, label: "Documents", path: "/documents", roles: ["admin", "editor"] as const },
+  { icon: HelpCircle, label: "FAQ Chunks", path: "/faq-chunks", roles: ["admin", "editor"] as const },
+  { icon: Settings, label: "Prompt Editor", path: "/prompt-editor", roles: ["admin"] as const },
+  { icon: Bot, label: "LLM", path: "/llm-settings", roles: ["admin"] as const },
+  { icon: MessageSquare, label: "Test Panel", path: "/test-panel", roles: ["admin", "editor"] as const },
+  { icon: Code2, label: "Widget", path: "/widget", roles: ["admin"] as const },
+  { icon: BarChart3, label: "Statistics", path: "/statistics", roles: ["admin", "editor"] as const },
+  { icon: Users, label: "Users", path: "/users", roles: ["admin"] as const },
 ];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
@@ -84,7 +85,9 @@ function DashboardLayoutContent({
   const isCollapsed = state === "collapsed";
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
-  const activeMenuItem = menuItems.find(item => item.path === location);
+  const role = user?.role === "admin" ? "admin" : "editor";
+  const visibleMenuItems = menuItems.filter((item) => item.roles.includes(role));
+  const activeMenuItem = visibleMenuItems.find(item => item.path === location);
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -172,7 +175,7 @@ function DashboardLayoutContent({
 
           <SidebarContent className="gap-0">
             <SidebarMenu className="px-2 py-1">
-              {menuItems.map(item => {
+              {visibleMenuItems.map(item => {
                 const isActive = location === item.path;
                 return (
                   <SidebarMenuItem key={item.path}>

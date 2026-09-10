@@ -18,6 +18,7 @@ import FaqChunksPage from "./pages/FaqChunksPage";
 import LlmSettingsPage from "./pages/LlmSettingsPage";
 import LoginPage from "./pages/LoginPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
+import WidgetPage from "./pages/WidgetPage";
 import DashboardLayout from "./components/DashboardLayout";
 import { Loader2 } from "lucide-react";
 
@@ -119,6 +120,11 @@ function Router() {
       <Route path="/users">
         <AuthGate>
           <UsersPage />
+        </AuthGate>
+      </Route>
+      <Route path="/widget">
+        <AuthGate>
+          <WidgetPage />
         </AuthGate>
       </Route>
       <Route path={"/404"} component={NotFound} />

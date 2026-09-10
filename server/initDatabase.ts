@@ -1,4 +1,4 @@
-import mysql from "mysql2/promise";
+﻿import mysql from "mysql2/promise";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -136,7 +136,7 @@ export async function initializeDatabase() {
         email VARCHAR(320) UNIQUE,
         passwordHash VARCHAR(255),
         loginMethod VARCHAR(64),
-        role ENUM('user', 'admin') NOT NULL DEFAULT 'user',
+        role ENUM('admin','editor') NOT NULL DEFAULT 'editor',
         mustChangePassword BOOLEAN NOT NULL DEFAULT FALSE,
         createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -372,7 +372,7 @@ export async function initializeDatabase() {
       // Users table backfills (older schema compatibility)
       `ALTER TABLE users ADD COLUMN passwordHash VARCHAR(255);`,
       `ALTER TABLE users ADD COLUMN loginMethod VARCHAR(64);`,
-      `ALTER TABLE users ADD COLUMN role ENUM('user','admin') NOT NULL DEFAULT 'user';`,
+      `ALTER TABLE users ADD COLUMN role ENUM('admin','editor') NOT NULL DEFAULT 'editor';`,
       `ALTER TABLE users ADD COLUMN mustChangePassword BOOLEAN NOT NULL DEFAULT FALSE;`,
       `ALTER TABLE users ADD COLUMN lastSignedIn TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;`,
 
@@ -439,6 +439,18 @@ export async function initializeDatabase() {
       await execStatementsSafely(alterStatements);
     }
 
+    await execStatementsSafely([
+      `CREATE TABLE IF NOT EXISTS widget_sites (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        origin VARCHAR(512) NOT NULL,
+        requestCount INT NOT NULL DEFAULT 0,
+        chatCount INT NOT NULL DEFAULT 0,
+        firstSeenAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        lastSeenAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY widget_sites_origin_unique (origin)
+      )`,
+    ]);
+
     // Critical compatibility guardrails:
     // even in migration-only mode we must have auth/settings tables and required columns
     // so runtime init does not crash if a prior migration chain is partial.
@@ -451,7 +463,7 @@ export async function initializeDatabase() {
         email VARCHAR(320) UNIQUE,
         passwordHash VARCHAR(255),
         loginMethod VARCHAR(64),
-        role ENUM('user', 'admin') NOT NULL DEFAULT 'user',
+        role ENUM('admin','editor') NOT NULL DEFAULT 'editor',
         mustChangePassword BOOLEAN NOT NULL DEFAULT FALSE,
         createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -484,10 +496,30 @@ export async function initializeDatabase() {
       `,
       `ALTER TABLE users ADD COLUMN passwordHash VARCHAR(255);`,
       `ALTER TABLE users ADD COLUMN loginMethod VARCHAR(64);`,
-      `ALTER TABLE users ADD COLUMN role ENUM('user','admin') NOT NULL DEFAULT 'user';`,
+      `ALTER TABLE users ADD COLUMN role ENUM('admin','editor') NOT NULL DEFAULT 'editor';`,
       `ALTER TABLE users ADD COLUMN mustChangePassword BOOLEAN NOT NULL DEFAULT FALSE;`,
       `ALTER TABLE users ADD COLUMN lastSignedIn TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;`,
       `ALTER TABLE llm_settings ADD COLUMN useQuickResponses BOOLEAN NOT NULL DEFAULT TRUE;`,
+    ]);
+
+    // Role migration: never demote existing admin; legacy "user" -> editor
+    await execStatementsSafely([
+      `ALTER TABLE users MODIFY COLUMN role ENUM('user','admin','editor') NOT NULL DEFAULT 'user'`,
+    ]);
+    try {
+      const [roleUpdate] = await connection.execute(
+        `UPDATE users SET role = 'editor' WHERE role = 'user'`
+      );
+      console.log(
+        "[DB Init] Role migration user->editor:",
+        (roleUpdate as { affectedRows?: number })?.affectedRows ?? 0,
+        "row(s)"
+      );
+    } catch (error) {
+      console.warn("[DB Init] Role migration UPDATE skipped/failed:", error);
+    }
+    await execStatementsSafely([
+      `ALTER TABLE users MODIFY COLUMN role ENUM('admin','editor') NOT NULL DEFAULT 'editor'`,
     ]);
 
     // Check if admin exists
@@ -521,7 +553,7 @@ export async function initializeDatabase() {
 
       adminId = (result as any).insertId;
 
-      console.log("[DB Init] ✅ Default admin created!");
+      console.log("[DB Init] вњ… Default admin created!");
       console.log(`[DB Init] Email: ${adminEmail}`);
       console.log(`[DB Init] Password: ${adminPassword}`);
     } else {
@@ -546,31 +578,31 @@ export async function initializeDatabase() {
 
     if (Array.isArray(promptRows) && promptRows.length === 0) {
       // Create default system prompt
-      const defaultPrompt = `Вы - профессиональный AI-ассистент базы знаний.
+      const defaultPrompt = `Р’С‹ - РїСЂРѕС„РµСЃСЃРёРѕРЅР°Р»СЊРЅС‹Р№ AI-Р°СЃСЃРёСЃС‚РµРЅС‚ Р±Р°Р·С‹ Р·РЅР°РЅРёР№.
 
-ВАША РОЛЬ:
-- Помогаете пользователям находить информацию в загруженных документах
-- Отвечаете точно, опираясь только на предоставленный контекст
-- Общаетесь профессионально, но дружелюбно
+Р’РђРЁРђ Р РћР›Р¬:
+- РџРѕРјРѕРіР°РµС‚Рµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏРј РЅР°С…РѕРґРёС‚СЊ РёРЅС„РѕСЂРјР°С†РёСЋ РІ Р·Р°РіСЂСѓР¶РµРЅРЅС‹С… РґРѕРєСѓРјРµРЅС‚Р°С…
+- РћС‚РІРµС‡Р°РµС‚Рµ С‚РѕС‡РЅРѕ, РѕРїРёСЂР°СЏСЃСЊ С‚РѕР»СЊРєРѕ РЅР° РїСЂРµРґРѕСЃС‚Р°РІР»РµРЅРЅС‹Р№ РєРѕРЅС‚РµРєСЃС‚
+- РћР±С‰Р°РµС‚РµСЃСЊ РїСЂРѕС„РµСЃСЃРёРѕРЅР°Р»СЊРЅРѕ, РЅРѕ РґСЂСѓР¶РµР»СЋР±РЅРѕ
 
-ПРАВИЛА ОТВЕТОВ:
-1. Используйте только информацию из предоставленного контекста
-2. Если информации нет в контексте - честно скажите об этом
-3. Цитируйте конкретные фрагменты из документов, когда это уместно
-4. Структурируйте ответы: используйте списки, заголовки, выделения
-5. Если вопрос неясен - попросите уточнить
+РџР РђР’РР›Рђ РћРўР’Р•РўРћР’:
+1. РСЃРїРѕР»СЊР·СѓР№С‚Рµ С‚РѕР»СЊРєРѕ РёРЅС„РѕСЂРјР°С†РёСЋ РёР· РїСЂРµРґРѕСЃС‚Р°РІР»РµРЅРЅРѕРіРѕ РєРѕРЅС‚РµРєСЃС‚Р°
+2. Р•СЃР»Рё РёРЅС„РѕСЂРјР°С†РёРё РЅРµС‚ РІ РєРѕРЅС‚РµРєСЃС‚Рµ - С‡РµСЃС‚РЅРѕ СЃРєР°Р¶РёС‚Рµ РѕР± СЌС‚РѕРј
+3. Р¦РёС‚РёСЂСѓР№С‚Рµ РєРѕРЅРєСЂРµС‚РЅС‹Рµ С„СЂР°РіРјРµРЅС‚С‹ РёР· РґРѕРєСѓРјРµРЅС‚РѕРІ, РєРѕРіРґР° СЌС‚Рѕ СѓРјРµСЃС‚РЅРѕ
+4. РЎС‚СЂСѓРєС‚СѓСЂРёСЂСѓР№С‚Рµ РѕС‚РІРµС‚С‹: РёСЃРїРѕР»СЊР·СѓР№С‚Рµ СЃРїРёСЃРєРё, Р·Р°РіРѕР»РѕРІРєРё, РІС‹РґРµР»РµРЅРёСЏ
+5. Р•СЃР»Рё РІРѕРїСЂРѕСЃ РЅРµСЏСЃРµРЅ - РїРѕРїСЂРѕСЃРёС‚Рµ СѓС‚РѕС‡РЅРёС‚СЊ
 
-СТИЛЬ ОБЩЕНИЯ:
-- Профессиональный, но не формальный
-- Краткий, но информативный
-- Понятный неспециалистам
-- Без ненужных вводных фраз
+РЎРўРР›Р¬ РћР‘Р©Р•РќРРЇ:
+- РџСЂРѕС„РµСЃСЃРёРѕРЅР°Р»СЊРЅС‹Р№, РЅРѕ РЅРµ С„РѕСЂРјР°Р»СЊРЅС‹Р№
+- РљСЂР°С‚РєРёР№, РЅРѕ РёРЅС„РѕСЂРјР°С‚РёРІРЅС‹Р№
+- РџРѕРЅСЏС‚РЅС‹Р№ РЅРµСЃРїРµС†РёР°Р»РёСЃС‚Р°Рј
+- Р‘РµР· РЅРµРЅСѓР¶РЅС‹С… РІРІРѕРґРЅС‹С… С„СЂР°Р·
 
-ОГРАНИЧЕНИЯ:
-- Не выдумывайте информацию
-- Не давайте медицинские, юридические или финансовые советы
-- Не обсуждайте политику или религию
-- Не предоставляйте личную информацию о людях`;
+РћР“Р РђРќРР§Р•РќРРЇ:
+- РќРµ РІС‹РґСѓРјС‹РІР°Р№С‚Рµ РёРЅС„РѕСЂРјР°С†РёСЋ
+- РќРµ РґР°РІР°Р№С‚Рµ РјРµРґРёС†РёРЅСЃРєРёРµ, СЋСЂРёРґРёС‡РµСЃРєРёРµ РёР»Рё С„РёРЅР°РЅСЃРѕРІС‹Рµ СЃРѕРІРµС‚С‹
+- РќРµ РѕР±СЃСѓР¶РґР°Р№С‚Рµ РїРѕР»РёС‚РёРєСѓ РёР»Рё СЂРµР»РёРіРёСЋ
+- РќРµ РїСЂРµРґРѕСЃС‚Р°РІР»СЏР№С‚Рµ Р»РёС‡РЅСѓСЋ РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ Р»СЋРґСЏС…`;
 
       await connection.execute(
         `INSERT INTO system_prompts (prompt, version, createdBy, isActive)
@@ -578,7 +610,7 @@ export async function initializeDatabase() {
         [defaultPrompt, 1, adminId]
       );
 
-      console.log("[DB Init] ✅ Default system prompt created!");
+      console.log("[DB Init] вњ… Default system prompt created!");
     } else {
       console.log("[DB Init] System prompt already exists");
     }
@@ -589,7 +621,7 @@ export async function initializeDatabase() {
       await connection.execute(
         `INSERT INTO llm_settings (provider, externalApiUrl, externalModel) VALUES ('local', 'https://openrouter.ai/api/v1', 'anthropic/claude-sonnet-4')`
       );
-      console.log("[DB Init] ✅ Default LLM settings created (local provider)");
+      console.log("[DB Init] вњ… Default LLM settings created (local provider)");
     }
 
     await connection.end();

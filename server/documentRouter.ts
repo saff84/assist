@@ -1,4 +1,4 @@
-import { router, publicProcedure, protectedProcedure } from "./_core/trpc";
+﻿import { router, publicProcedure, protectedProcedure } from "./_core/trpc";
 import { z } from "zod";
 import * as documentDb from "./documentDb";
 import * as documentProcessor from "./documentProcessor";
@@ -14,6 +14,7 @@ import {
 } from "./manualChunkGenerator";
 import { generateChunksFromManualProductItems } from "./manualChunkGenerator";
 import { getSystemPromptTemplate } from "./rag/promptLoader";
+import { canManageKnowledgeBase, isAdmin } from "./_core/roles";
 
 /**
  * Document management and RAG tRPC router
@@ -67,7 +68,7 @@ export const documentRouter = router({
     .query(async ({ input, ctx }) => {
       try {
         // Only admins can view processing details
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can view document processing details",
@@ -102,20 +103,20 @@ export const documentRouter = router({
     .input(
       z.object({
         documentId: z.number(),
-        regionIds: z.array(z.number()).min(1, "Не выбрано ни одной области"),
+        regionIds: z.array(z.number()).min(1, "РќРµ РІС‹Р±СЂР°РЅРѕ РЅРё РѕРґРЅРѕР№ РѕР±Р»Р°СЃС‚Рё"),
         regenerateEmbeddings: z.boolean().optional(),
         chunkTitle: z
           .string()
           .trim()
-          .min(1, "Заголовок слишком короткий")
-          .max(256, "Заголовок слишком длинный")
+          .min(1, "Р—Р°РіРѕР»РѕРІРѕРє СЃР»РёС€РєРѕРј РєРѕСЂРѕС‚РєРёР№")
+          .max(256, "Р—Р°РіРѕР»РѕРІРѕРє СЃР»РёС€РєРѕРј РґР»РёРЅРЅС‹Р№")
           .optional(),
         productGroupId: z.number().int().positive().optional(),
       })
     )
     .mutation(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can generate chunks",
@@ -127,7 +128,7 @@ export const documentRouter = router({
           if (!group || group.documentId !== input.documentId) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: "Выбранная товарная группа не принадлежит этому документу",
+              message: "Р’С‹Р±СЂР°РЅРЅР°СЏ С‚РѕРІР°СЂРЅР°СЏ РіСЂСѓРїРїР° РЅРµ РїСЂРёРЅР°РґР»РµР¶РёС‚ СЌС‚РѕРјСѓ РґРѕРєСѓРјРµРЅС‚Сѓ",
             });
           }
         }
@@ -149,7 +150,7 @@ export const documentRouter = router({
         console.error("Error generating chunk from selected regions:", error);
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
-          message: error instanceof Error ? error.message : "Не удалось создать чанк из выбранных областей",
+          message: error instanceof Error ? error.message : "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ С‡Р°РЅРє РёР· РІС‹Р±СЂР°РЅРЅС‹С… РѕР±Р»Р°СЃС‚РµР№",
         });
       }
     }),
@@ -162,7 +163,7 @@ export const documentRouter = router({
     .mutation(async ({ input, ctx }) => {
       try {
         // Only admins can delete documents
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can delete documents",
@@ -196,7 +197,7 @@ export const documentRouter = router({
   getCleanupStats: protectedProcedure.query(async ({ ctx }) => {
     try {
       // Only admins can view cleanup stats
-      if (ctx.user.role !== "admin") {
+      if (!isAdmin(ctx.user.role)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "Only administrators can view cleanup statistics",
@@ -221,7 +222,7 @@ export const documentRouter = router({
   cleanupOrphanedRecords: protectedProcedure.mutation(async ({ ctx }) => {
     try {
       // Only admins can cleanup orphaned records
-      if (ctx.user.role !== "admin") {
+      if (!isAdmin(ctx.user.role)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "Only administrators can cleanup orphaned records",
@@ -283,7 +284,7 @@ export const documentRouter = router({
     .mutation(async ({ input, ctx }) => {
       try {
         // Only admins can update system prompt
-        if (ctx.user.role !== "admin") {
+        if (!isAdmin(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can update system prompts",
@@ -404,7 +405,7 @@ export const documentRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can update document title",
@@ -500,7 +501,7 @@ export const documentRouter = router({
   regenerateAllEmbeddings: protectedProcedure.mutation(async ({ ctx }) => {
     try {
       // Only admins can regenerate embeddings
-      if (ctx.user.role !== "admin") {
+      if (!isAdmin(ctx.user.role)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "Only administrators can regenerate embeddings",
@@ -527,7 +528,7 @@ export const documentRouter = router({
     .mutation(async ({ input, ctx }) => {
       try {
         // Only admins can regenerate embeddings
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can regenerate embeddings",
@@ -559,7 +560,7 @@ export const documentRouter = router({
     .query(async ({ input, ctx }) => {
       try {
         // Only admins can view chunk content
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can view chunk content",
@@ -592,7 +593,7 @@ export const documentRouter = router({
     .query(async ({ input, ctx }) => {
       try {
         // Only admins can view sections
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can view document sections",
@@ -624,7 +625,7 @@ export const documentRouter = router({
     .query(async ({ input, ctx }) => {
       try {
         // Only admins can view section details
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can view section details",
@@ -662,7 +663,7 @@ export const documentRouter = router({
     .query(async ({ input, ctx }) => {
       try {
         // Only admins can view product details
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can view product details",
@@ -694,7 +695,7 @@ export const documentRouter = router({
     .input(z.object({ documentId: z.number() }))
     .query(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can view annotations",
@@ -720,7 +721,7 @@ export const documentRouter = router({
     .input(z.object({ documentId: z.number() }))
     .query(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can view chunks with annotations",
@@ -755,7 +756,7 @@ export const documentRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can create annotations",
@@ -806,7 +807,7 @@ export const documentRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can delete annotations",
@@ -832,7 +833,7 @@ export const documentRouter = router({
     .input(z.object({ documentId: z.number() }))
     .query(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can view product groups",
@@ -872,7 +873,7 @@ export const documentRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can create product groups",
@@ -916,7 +917,7 @@ export const documentRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can update product groups",
@@ -943,7 +944,7 @@ export const documentRouter = router({
     .input(z.object({ groupId: z.number() }))
     .mutation(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can delete product groups",
@@ -969,7 +970,7 @@ export const documentRouter = router({
     .input(z.object({ groupId: z.number() }))
     .query(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can view products in group",
@@ -1000,7 +1001,7 @@ export const documentRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can add products to group",
@@ -1026,7 +1027,7 @@ export const documentRouter = router({
     .input(z.object({ productIds: z.array(z.number()) }))
     .mutation(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can remove products from group",
@@ -1052,7 +1053,7 @@ export const documentRouter = router({
     .input(z.object({ documentId: z.number(), groupId: z.number() }))
     .query(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can view product items",
@@ -1087,7 +1088,7 @@ export const documentRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can create product items",
@@ -1133,7 +1134,7 @@ export const documentRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can update product items",
@@ -1156,7 +1157,7 @@ export const documentRouter = router({
     .input(z.object({ itemId: z.number() }))
     .mutation(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can delete product items",
@@ -1186,7 +1187,7 @@ export const documentRouter = router({
     .input(z.object({ documentId: z.number() }))
     .query(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can view manual regions",
@@ -1260,7 +1261,7 @@ export const documentRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can create manual regions",
@@ -1362,7 +1363,7 @@ export const documentRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can update manual regions",
@@ -1409,7 +1410,7 @@ export const documentRouter = router({
     .input(z.object({ regionId: z.number() }))
     .mutation(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can delete manual regions",
@@ -1440,7 +1441,7 @@ export const documentRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can generate chunks",
@@ -1458,7 +1459,7 @@ export const documentRouter = router({
         console.error("Error generating manual chunks:", error);
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
-          message: error instanceof Error ? error.message : "Не удалось создать чанки",
+          message: error instanceof Error ? error.message : "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ С‡Р°РЅРєРё",
         });
       }
     }),
@@ -1475,7 +1476,7 @@ export const documentRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can generate chunks",
@@ -1512,7 +1513,7 @@ export const documentRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       try {
-        if (ctx.user.role !== "admin") {
+        if (!canManageKnowledgeBase(ctx.user.role)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Only administrators can generate chunks",
@@ -1532,7 +1533,7 @@ export const documentRouter = router({
           message:
             error instanceof Error
               ? error.message
-              : "Не удалось создать FAQ-чанки",
+              : "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ FAQ-С‡Р°РЅРєРё",
         });
       }
     }),

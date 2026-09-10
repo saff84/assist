@@ -1,4 +1,4 @@
-import { router, adminProcedure } from "./_core/trpc";
+﻿import { router, knowledgeProcedure } from "./_core/trpc";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import * as faqDb from "./faqDb";
@@ -22,16 +22,16 @@ function buildFaqContent(input: {
 
   const imagesBlock =
     images.length > 0
-      ? `\n\nИзображения:\n${images
+      ? `\n\nРР·РѕР±СЂР°Р¶РµРЅРёСЏ:\n${images
           .map((img, idx) => `![${img.filename || `image_${idx + 1}`}](${img.url})`)
           .join("\n")}`
       : "";
 
-  return `Вопрос:\n${title}\n\nОтвет:\n${answer}${imagesBlock}`.trim();
+  return `Р’РѕРїСЂРѕСЃ:\n${title}\n\nРћС‚РІРµС‚:\n${answer}${imagesBlock}`.trim();
 }
 
 export const faqRouter = router({
-  list: adminProcedure
+  list: knowledgeProcedure
     .input(z.object({ search: z.string().optional() }).optional())
     .query(async ({ input }) => {
       try {
@@ -46,7 +46,7 @@ export const faqRouter = router({
       }
     }),
 
-  create: adminProcedure
+  create: knowledgeProcedure
     .input(
       z.object({
         title: z.string().trim().min(3).max(512),
@@ -95,7 +95,7 @@ export const faqRouter = router({
       }
     }),
 
-  update: adminProcedure
+  update: knowledgeProcedure
     .input(
       z.object({
         id: z.number().int().positive(),
@@ -149,7 +149,7 @@ export const faqRouter = router({
       }
     }),
 
-  delete: adminProcedure
+  delete: knowledgeProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ input }) => {
       try {

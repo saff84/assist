@@ -3,6 +3,7 @@ import { z } from "zod";
 import * as db from "./db";
 import { publicProcedure, router } from "./_core/trpc";
 import { getAuthCookieName, getCookieSecureFlag, hashPassword, issueAuthToken, verifyPassword } from "./_core/auth";
+import { normalizeUserRole } from "./_core/roles";
 
 const passwordSchema = z
   .string()
@@ -76,7 +77,7 @@ export const authRouter = router({
             id: ctx.user.id,
             name: ctx.user.name,
             email: ctx.user.email,
-            role: ctx.user.role,
+            role: normalizeUserRole(ctx.user.role),
             mustChangePassword: ctx.user.mustChangePassword,
           }
         : null,
@@ -137,7 +138,7 @@ export const authRouter = router({
           id: user.id,
           name: user.name,
           email: user.email,
-          role: user.role,
+          role: normalizeUserRole(user.role),
           mustChangePassword: user.mustChangePassword,
         },
       };

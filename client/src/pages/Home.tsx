@@ -1,10 +1,11 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link } from "wouter";
-import { FileText, MessageSquare, Settings, BarChart3, Zap, Users, HelpCircle } from "lucide-react";
+import { FileText, MessageSquare, Settings, BarChart3, Zap, Users, HelpCircle, Code2 } from "lucide-react";
 
 export default function Home() {
   const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
@@ -17,6 +18,7 @@ export default function Home() {
 
           <p className="text-sm text-muted-foreground mt-2">
             Аккаунт: {user?.name ?? "Admin"} ({user?.email ?? "admin@localhost"})
+            {user?.role ? ` · роль: ${user.role}` : ""}
           </p>
         </div>
 
@@ -38,22 +40,24 @@ export default function Home() {
             </Card>
           </Link>
 
-          <Link href="/prompt-editor">
-            <Card className="cursor-pointer hover:shadow-lg transition-shadow h-full">
-              <CardHeader>
-                <div className="flex items-center gap-2">
-                  <Settings className="w-5 h-5 text-green-500" />
-                  <CardTitle>Prompt Editor</CardTitle>
-                </div>
-                <CardDescription>Configure assistant behavior</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground">
-                  Customize the system prompt to define assistant personality
-                </p>
-              </CardContent>
-            </Card>
-          </Link>
+          {isAdmin && (
+            <Link href="/prompt-editor">
+              <Card className="cursor-pointer hover:shadow-lg transition-shadow h-full">
+                <CardHeader>
+                  <div className="flex items-center gap-2">
+                    <Settings className="w-5 h-5 text-green-500" />
+                    <CardTitle>Prompt Editor</CardTitle>
+                  </div>
+                  <CardDescription>Configure assistant behavior</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground">
+                    Customize the system prompt to define assistant personality
+                  </p>
+                </CardContent>
+              </Card>
+            </Link>
+          )}
 
           <Link href="/test-panel">
             <Card className="cursor-pointer hover:shadow-lg transition-shadow h-full">
@@ -106,22 +110,43 @@ export default function Home() {
             </Card>
           </Link>
 
-          <Link href="/users">
-            <Card className="cursor-pointer hover:shadow-lg transition-shadow h-full">
-              <CardHeader>
-                <div className="flex items-center gap-2">
-                  <Users className="w-5 h-5 text-cyan-500" />
-                  <CardTitle>Users</CardTitle>
-                </div>
-                <CardDescription>User management is simplified</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground">
-                  View information about the built-in administrator account
-                </p>
-              </CardContent>
-            </Card>
-          </Link>
+          {isAdmin && (
+            <Link href="/widget">
+              <Card className="cursor-pointer hover:shadow-lg transition-shadow h-full">
+                <CardHeader>
+                  <div className="flex items-center gap-2">
+                    <Code2 className="w-5 h-5 text-indigo-500" />
+                    <CardTitle>Widget</CardTitle>
+                  </div>
+                  <CardDescription>Embed chat on websites</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground">
+                    Код вставки, CORS и список сайтов, подключённых к виджету
+                  </p>
+                </CardContent>
+              </Card>
+            </Link>
+          )}
+
+          {isAdmin && (
+            <Link href="/users">
+              <Card className="cursor-pointer hover:shadow-lg transition-shadow h-full">
+                <CardHeader>
+                  <div className="flex items-center gap-2">
+                    <Users className="w-5 h-5 text-cyan-500" />
+                    <CardTitle>Users</CardTitle>
+                  </div>
+                  <CardDescription>Роли admin и editor</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground">
+                    Создание пользователей и назначение ролей для работы с базой знаний
+                  </p>
+                </CardContent>
+              </Card>
+            </Link>
+          )}
         </div>
 
         <div className="bg-card border rounded-lg p-8">

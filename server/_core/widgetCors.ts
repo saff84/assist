@@ -14,6 +14,10 @@ function parseAllowedOrigins(): string[] | "*" {
     .filter(Boolean);
 }
 
+export function getAllowedOriginsConfig(): string[] | "*" {
+  return parseAllowedOrigins();
+}
+
 function resolveAllowedOrigin(requestOrigin: string | undefined): string | null {
   const allowed = parseAllowedOrigins();
 
