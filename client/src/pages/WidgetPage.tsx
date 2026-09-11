@@ -127,6 +127,29 @@ export default function WidgetPage() {
               <p>
                 Whitelist доменов: <code>WIDGET_ALLOWED_ORIGINS=https://shop.example.com,https://www.shop.example.com</code>
               </p>
+              <p className="pt-2">
+                <strong>GTM:</strong> на HTTPS-сайте виджет тоже должен открываться по{" "}
+                <code>https://</code> (иначе mixed content). Код для Custom HTML:
+              </p>
+              <pre className="rounded-lg bg-muted p-3 text-xs overflow-x-auto whitespace-pre-wrap">{`<script>
+(function () {
+  var API = ${JSON.stringify(data.publicBaseUrl)};
+  var s = document.createElement('script');
+  s.src = API + '/chat-widget.js';
+  s.defer = true;
+  s.setAttribute('data-sanext-chat-widget', '1');
+  s.setAttribute('data-auto-init', 'false');
+  s.onload = function () {
+    window.SanextChatWidget && window.SanextChatWidget.init({
+      apiBaseUrl: API,
+      title: 'SANEXT Assistant',
+      subtitle: 'Задайте вопрос по товарам',
+      position: 'bottom-right'
+    });
+  };
+  document.head.appendChild(s);
+})();
+</script>`}</pre>
             </div>
           </CardContent>
         </Card>
