@@ -5,6 +5,10 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  define: {
+    "process.env.NODE_ENV": JSON.stringify("production"),
+    "process.env": JSON.stringify({ NODE_ENV: "production" }),
+  },
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "client", "src"),
@@ -28,6 +32,7 @@ export default defineConfig({
       output: {
         assetFileNames: "chat-widget[extname]",
         inlineDynamicImports: true,
+        intro: 'var process = { env: { NODE_ENV: "production" } };',
       },
     },
   },
