@@ -62,6 +62,11 @@ RUN echo "Checking TypeScript compilation..." && \
 RUN echo "Starting vite build..." && \
     pnpm exec vite build
 
+RUN echo "Building embeddable chat widget..." && \
+    pnpm exec vite build --config vite.widget.config.ts && \
+    test -f dist/public/chat-widget.js && \
+    echo "chat-widget.js ready"
+
 # Copy PDF.js worker to dist/public (Vite plugin may not copy it due to emptyOutDir)
 RUN echo "Copying PDF.js worker..." && \
     cp node_modules/pdfjs-dist/build/pdf.worker.min.mjs dist/public/pdf.worker.min.mjs && \

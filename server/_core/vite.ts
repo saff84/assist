@@ -60,8 +60,13 @@ export function serveStatic(app: Express) {
 
   app.use(express.static(distPath));
 
-  // fall through to index.html if the file doesn't exist
-  app.use("*", (_req, res) => {
+  // fall through to index.html for SPA routes only (not missing assets like chat-widget.js)
+  app.use("*", (req, res) => {
+    const pathname = req.path || "";
+    if (/\.[a-z0-9]+$/i.test(pathname)) {
+      res.status(404).type("text/plain").send("Not found");
+      return;
+    }
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }
