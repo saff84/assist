@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Loader2, Trash2, Upload, AlertCircle, CheckCircle2, Clock, FileText, ShoppingCart, BookOpen, Eye, Tag, Grid3x3, RefreshCw, Download } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Loader2, Trash2, Upload, AlertCircle, CheckCircle2, Clock, FileText, ShoppingCart, BookOpen, Eye, Tag, Grid3x3, RefreshCw, Download, Package } from "lucide-react";
 import { toast } from "sonner";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -17,6 +18,7 @@ type ProcessingType =
   | "general"
   | "instruction"
   | "catalog"
+  | "catalog_single"
   | "certificate"
   | "passport"
   | "warranty_faq"
@@ -26,6 +28,8 @@ export default function DocumentsPage() {
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [processingType, setProcessingType] = useState<ProcessingType>("general");
+  const [productTitle, setProductTitle] = useState("");
+  const [productSku, setProductSku] = useState("");
   const [shouldPoll, setShouldPoll] = useState(false);
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<string>("all");
@@ -116,8 +120,63 @@ export default function DocumentsPage() {
     const files = e.currentTarget.files;
     if (!files || files.length === 0) return;
 
-    const file = files[0];
     const supportedFormats = [".pdf", ".xlsx", ".xls", ".docx"];
+    const selected = Array.from(files);
+
+    if (processingType === "catalog_single") {
+      if (selected.length === 1 && (!productTitle.trim() || !productSku.trim())) {
+        toast.error("Для одного файла укажите название и артикул (SKU)");
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+      // Batch: each file = separate document. If many files selected with one title/sku,
+      // use filename as title suffix for uniqueness when >1 file.
+      setIsUploading(true);
+      try {
+        let lastId: number | null = null;
+        for (let i = 0; i < selected.length; i++) {
+          const file = selected[i];
+          const fileExt = "." + file.name.split(".").pop()?.toLowerCase();
+          if (!supportedFormats.includes(fileExt)) {
+            toast.error(`Пропуск ${file.name}: неподдерживаемый формат`);
+            continue;
+          }
+          if (file.size > 100 * 1024 * 1024) {
+            toast.error(`Пропуск ${file.name}: больше 100MB`);
+            continue;
+          }
+          const baseName = file.name.replace(/\.[^.]+$/, "");
+          const title =
+            selected.length === 1
+              ? productTitle.trim()
+              : productTitle.trim()
+                ? `${productTitle.trim()} — ${baseName}`
+                : baseName;
+          const sku =
+            selected.length === 1
+              ? productSku.trim()
+              : productSku.trim()
+                ? `${productSku.trim()}-${i + 1}`
+                : baseName.slice(0, 64);
+          lastId = await uploadFile(file, "catalog_single", { title, sku, redirect: false });
+        }
+        setIsUploadDialogOpen(false);
+        setProductTitle("");
+        setProductSku("");
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        await refetch();
+        if (lastId && selected.length === 1) {
+          setLocation(`/documents/${lastId}/annotate`);
+        } else if (selected.length > 1) {
+          toast.success(`Загружено файлов: ${selected.length}. Откройте каждый для разметки.`);
+        }
+      } finally {
+        setIsUploading(false);
+      }
+      return;
+    }
+
+    const file = selected[0];
     const fileExt = "." + file.name.split(".").pop()?.toLowerCase();
 
     if (!supportedFormats.includes(fileExt)) {
@@ -133,19 +192,37 @@ export default function DocumentsPage() {
     await uploadFile(file, processingType);
   };
 
-  const uploadFile = async (file: File, type: ProcessingType) => {
-    setIsUploading(true);
+  const uploadFile = async (
+    file: File,
+    type: ProcessingType,
+    opts?: { title?: string; sku?: string; redirect?: boolean }
+  ): Promise<number | null> => {
+    const shouldRedirect = opts?.redirect !== false;
+    if (opts?.redirect !== false) {
+      setIsUploading(true);
+    }
     setShouldPoll(true);
 
     try {
       const formData = new FormData();
       formData.append("file", file);
       const skipFullProcessing =
-        type === "manual" || type === "certificate" || type === "passport" || type === "warranty_faq";
-      // For manual mode, keep docType as general but skip full processing
-      const actualProcessingType = type === "manual" ? "general" : type;
+        type === "manual" ||
+        type === "certificate" ||
+        type === "passport" ||
+        type === "warranty_faq" ||
+        type === "catalog_single";
+      // catalog_single keeps catalog docType for RAG; manual stays general
+      const actualProcessingType =
+        type === "manual" ? "general" : type === "catalog_single" ? "catalog" : type;
       formData.append("processingType", actualProcessingType);
       formData.append("skipFullProcessing", skipFullProcessing.toString());
+      if (opts?.title?.trim()) {
+        formData.append("title", opts.title.trim());
+      }
+      if (opts?.sku?.trim()) {
+        formData.append("sku", opts.sku.trim());
+      }
       
       const response = await fetch("/api/upload/document", {
         method: "POST",
@@ -160,25 +237,33 @@ export default function DocumentsPage() {
 
       const result = await response.json();
       toast.success(result.message || "Document uploaded successfully");
-      setIsUploadDialogOpen(false);
+      if (shouldRedirect) {
+        setIsUploadDialogOpen(false);
+      }
       
       // Reset file input
-      if (fileInputRef.current) {
+      if (shouldRedirect && fileInputRef.current) {
         fileInputRef.current.value = "";
       }
       
       // Refresh document list
-      refetch();
+      if (shouldRedirect) {
+        refetch();
+      }
 
       // For specialized/manual flows, jump straight to annotation
-      if (skipFullProcessing && result?.documentId) {
+      if (shouldRedirect && skipFullProcessing && result?.documentId) {
         setLocation(`/documents/${result.documentId}/annotate`);
       }
+      return typeof result?.documentId === "number" ? result.documentId : null;
     } catch (error) {
       console.error("Upload error:", error);
       toast.error(error instanceof Error ? error.message : "Failed to upload document");
+      return null;
     } finally {
-      setIsUploading(false);
+      if (shouldRedirect) {
+        setIsUploading(false);
+      }
     }
   };
 
@@ -523,6 +608,7 @@ export default function DocumentsPage() {
                   { value: "general" as const, label: "Общий", icon: FileText, group: "Авто" },
                   { value: "instruction" as const, label: "Инструкция", icon: BookOpen, group: "Авто" },
                   { value: "catalog" as const, label: "Каталог", icon: ShoppingCart, group: "Авто" },
+                  { value: "catalog_single" as const, label: "1 товар", icon: Package, group: "Ручной" },
                   { value: "certificate" as const, label: "Сертификат", icon: Eye, group: "Ручной" },
                   { value: "passport" as const, label: "Паспорт", icon: FileText, group: "Ручной" },
                   { value: "warranty_faq" as const, label: "FAQ гарантия", icon: Grid3x3, group: "Ручной" },
@@ -552,8 +638,35 @@ export default function DocumentsPage() {
                 })}
               </div>
               <p className="text-xs text-muted-foreground">
-                Спецтипы/ручной режим после загрузки откроют экран разметки.
+                «Каталог» — авторазбор большого PDF. «1 товар» — отдельный файл на товар
+                (docType=catalog + ручная разметка, без потери качества поиска).
               </p>
+              {processingType === "catalog_single" && (
+                <div className="grid gap-3 sm:grid-cols-2 pt-1">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="product-title">Название товара</Label>
+                    <Input
+                      id="product-title"
+                      value={productTitle}
+                      onChange={(e) => setProductTitle(e.target.value)}
+                      placeholder="Напр. Труба SANEXT PE-Xa 16"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="product-sku">Артикул (SKU)</Label>
+                    <Input
+                      id="product-sku"
+                      value={productSku}
+                      onChange={(e) => setProductSku(e.target.value)}
+                      placeholder="Напр. 4016"
+                    />
+                  </div>
+                  <p className="sm:col-span-2 text-xs text-muted-foreground">
+                    Можно выбрать несколько файлов: каждый станет отдельным документом.
+                    Для пакета название/SKU будут дополнены именем файла.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Upload area */}
@@ -563,13 +676,16 @@ export default function DocumentsPage() {
                 onClick={() => fileInputRef.current?.click()}
               >
                 <Upload className="w-7 h-7 mx-auto mb-2 text-muted-foreground" />
-                <p className="font-medium">Выбрать файл</p>
+                <p className="font-medium">
+                  {processingType === "catalog_single" ? "Выбрать файл(ы)" : "Выбрать файл"}
+                </p>
                 <p className="text-xs text-muted-foreground">PDF / Excel / Word • до 100MB</p>
                 <input
                   ref={fileInputRef}
                   type="file"
                   onChange={handleFileSelect}
                   accept=".pdf,.xlsx,.xls,.docx"
+                  multiple={processingType === "catalog_single"}
                   className="hidden"
                 />
               </div>

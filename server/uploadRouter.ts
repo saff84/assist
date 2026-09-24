@@ -309,11 +309,15 @@ export function registerUploadRoutes(app: Express) {
         | "warranty_faq";
       const titleRaw = typeof req.body.title === "string" ? req.body.title : undefined;
       const title = titleRaw?.toString().trim();
+      const skuRaw = typeof req.body.sku === "string" ? req.body.sku : undefined;
+      const sku = skuRaw?.toString().trim();
       // Get skip processing flag (for manual annotation)
       const skipFullProcessing = req.body.skipFullProcessing === "true" || req.body.skipFullProcessing === true;
       
       // Log for debugging
-      console.log(`📤 Uploading: ${filename}, type: ${fileType}, size: ${fileSize}, processing: ${processingType}, skipFullProcessing: ${skipFullProcessing}`);
+      console.log(
+        `📤 Uploading: ${filename}, type: ${fileType}, size: ${fileSize}, processing: ${processingType}, skipFullProcessing: ${skipFullProcessing}, sku: ${sku || "-"}`
+      );
 
       // Validate file
       const validation = documentProcessor.validateFile(filename, fileSize);
@@ -339,7 +343,18 @@ export function registerUploadRoutes(app: Express) {
       });
 
       // Process document in background
-      processDocumentAsync(documentId, file.path, filename, fileType, processingType, skipFullProcessing).catch((error) => {
+      processDocumentAsync(
+        documentId,
+        file.path,
+        filename,
+        fileType,
+        processingType,
+        skipFullProcessing,
+        {
+          title: title && title.length > 0 ? title : null,
+          sku: sku && sku.length > 0 ? sku : null,
+        }
+      ).catch((error) => {
         console.error(`Background processing failed for document ${documentId}:`, error);
       });
 
@@ -353,6 +368,63 @@ export function registerUploadRoutes(app: Express) {
       res.status(500).json({ error: "Failed to upload document" });
     }
   });
+}
+
+/**
+ * Seed RAG quality signals for one-file-one-product catalog uploads:
+ * - products.sku row (document-level SKU boost)
+ * - one product_group + one product_item (ready for manual region binding)
+ */
+async function seedSingleProductCatalogScaffold(
+  documentId: number,
+  meta: { title?: string | null; sku?: string | null; filename: string }
+) {
+  const displayName =
+    (meta.title && meta.title.trim()) ||
+    meta.filename.replace(/\.[^.]+$/, "").trim() ||
+    `Товар ${documentId}`;
+  const sku =
+    (meta.sku && meta.sku.trim()) ||
+    displayName.replace(/\s+/g, "-").slice(0, 64) ||
+    `SKU-${documentId}`;
+
+  if (meta.title && meta.title.trim()) {
+    await documentDb.updateDocumentTitle(documentId, meta.title.trim());
+  } else {
+    await documentDb.updateDocumentTitle(documentId, displayName);
+  }
+
+  const groupId = await documentDb.createProductGroup({
+    documentId,
+    name: displayName,
+    description: "Автосоздано для режима «1 файл = 1 товар»",
+    createdBy: 0,
+  });
+
+  await documentDb.createProductItem({
+    documentId,
+    groupId,
+    name: displayName,
+    description: sku ? `SKU: ${sku}` : null,
+    sortOrder: 0,
+    createdBy: 0,
+  });
+
+  await documentDb.replaceDocumentProducts(documentId, [
+    {
+      documentId,
+      sku,
+      name: displayName,
+      groupId,
+      sectionId: null,
+      attributes: { source: "catalog_single" },
+      pageNumber: null,
+    },
+  ]);
+
+  console.log(
+    `[Upload] Seeded single-product catalog scaffold for doc ${documentId}: sku=${sku}, groupId=${groupId}`
+  );
 }
 
 /**
@@ -370,7 +442,8 @@ async function processDocumentAsync(
     | "certificate"
     | "passport"
     | "warranty_faq" = "general",
-  skipFullProcessing: boolean = false
+  skipFullProcessing: boolean = false,
+  meta: { title?: string | null; sku?: string | null } = {}
 ) {
   try {
     console.log(`🔄 Processing document ${documentId}: ${filename} (type: ${fileType}, processing: ${processingType})`);
@@ -399,13 +472,28 @@ async function processDocumentAsync(
         return;
       }
 
+      // One-file-one-product catalog: keep docType=catalog quality signals for RAG
+      if (processingType === "catalog") {
+        try {
+          await seedSingleProductCatalogScaffold(documentId, {
+            title: meta.title ?? null,
+            sku: meta.sku ?? null,
+            filename,
+          });
+        } catch (error) {
+          console.warn(`[Upload] Failed to seed single-product catalog scaffold:`, error);
+        }
+      }
+
       await documentDb.updateDocumentStatus(documentId, "indexed");
       await documentDb.updateDocumentChunksCount(documentId, 0);
       await documentDb.updateDocumentProgress(
         documentId,
         "completed",
         100,
-        "Готово для ручной разметки — выделите области вручную"
+        processingType === "catalog"
+          ? "Готово: разметьте области товара и сгенерируйте чанки"
+          : "Готово для ручной разметки — выделите области вручную"
       );
 
       try {
