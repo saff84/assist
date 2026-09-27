@@ -98,9 +98,12 @@ services:
       # Database
       DATABASE_URL: mysql://${MYSQL_USER:-assistant}:${MYSQL_PASSWORD:-assistant_password}@mysql:3306/${MYSQL_DATABASE:-ai_knowledge_db}
       
-      # LLM Configuration
+      # LLM Configuration (must use Docker service name, not localhost)
+      OLLAMA_URL: http://ollama:11434
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_MODEL: gemma2:2b
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-bge-m3}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-bge-m3}
       TABLE_EXTRACTOR_PYTHON: ${TABLE_EXTRACTOR_PYTHON:-python3}
       
       # Vector DB Configuration
