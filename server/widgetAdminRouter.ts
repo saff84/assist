@@ -32,7 +32,7 @@ export const widgetAdminRouter = router({
       websiteQueries = sites.reduce((sum, site) => sum + site.chatCount, 0);
     }
 
-    const widgetAssetVersion = "20260928b";
+    const widgetAssetVersion = "20260928c";
     const embedSnippet = `<script
   src="${publicBaseUrl}/chat-widget.js?v=${widgetAssetVersion}"
   data-api-url="${publicBaseUrl}"

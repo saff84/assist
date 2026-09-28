@@ -224,11 +224,33 @@ export default function TestPanelPage() {
         <div className="lg:col-span-2 min-h-0 h-full flex flex-col">
           <Card className="flex-1 min-h-0 flex flex-col overflow-hidden transition-all hover:shadow-md">
             <CardHeader className="pb-3 border-b">
-              <CardTitle className="flex items-center gap-2">
-                <Send className="w-5 h-5 text-primary" />
-                Чат
-              </CardTitle>
-              <CardDescription>Задавайте вопросы для тестирования ассистента</CardDescription>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Send className="w-5 h-5 text-primary" />
+                    Чат
+                  </CardTitle>
+                  <CardDescription>Задавайте вопросы для тестирования ассистента</CardDescription>
+                </div>
+                {(messages.length > 0 || forceDocumentType) && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      if (processingStage !== "idle" || askMutation.isPending) return;
+                      setMessages([]);
+                      setInput("");
+                      setTopic(null);
+                      setForceDocumentType(null);
+                      setProcessingStage("idle");
+                    }}
+                    disabled={processingStage !== "idle" || askMutation.isPending}
+                  >
+                    Новый вопрос
+                  </Button>
+                )}
+              </div>
               {processingStage !== "idle" && (
                 <div className="mt-3">
                   <ProcessingTimeline stage={processingStage} />

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type CSSProperties } from "react";
-import { Loader2, Send, X, MessageCircle } from "lucide-react";
+import { Loader2, Send, X, MessageCircle, RotateCcw } from "lucide-react";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 import { WidgetApiClient, type WidgetAttachment } from "@/widget/api";
 import "@/widget/widget.css";
@@ -69,7 +69,7 @@ export function WebChatWidget({
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const [sessionId] = useState(() => `session-${Date.now()}-${Math.random()}`);
+  const [sessionId, setSessionId] = useState(() => `session-${Date.now()}-${Math.random()}`);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [processingStage, setProcessingStage] = useState<ProcessingStage>("idle");
   const [isSending, setIsSending] = useState(false);
@@ -174,6 +174,18 @@ export function WebChatWidget({
     }
   };
 
+  const handleNewQuestion = () => {
+    if (isSending || processingStage !== "idle") return;
+    stageTimers.current.forEach((timer) => clearTimeout(timer));
+    stageTimers.current = [];
+    setMessages([]);
+    setInput("");
+    setTopic(null);
+    setForceDocumentType(null);
+    setProcessingStage("idle");
+    setSessionId(`session-${Date.now()}-${Math.random()}`);
+  };
+
   const handlePickTopic = (picked: ChatTopic) => {
     if (processingStage !== "idle") return;
     setTopic(picked);
@@ -239,14 +251,29 @@ export function WebChatWidget({
             <h3 className="sanext-widget-brand-title">{title}</h3>
             <p className="sanext-widget-brand-subtitle">{subtitle}</p>
           </div>
-          <button
-            type="button"
-            onClick={() => setIsOpen(false)}
-            className="sanext-widget-close"
-            aria-label="Закрыть чат"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="sanext-widget-header-actions">
+            {(messages.length > 0 || forceDocumentType) && (
+              <button
+                type="button"
+                onClick={handleNewQuestion}
+                className="sanext-widget-new-question"
+                disabled={isSending || processingStage !== "idle"}
+                aria-label="Задать новый вопрос"
+                title="Задать новый вопрос"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Новый вопрос</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              className="sanext-widget-close"
+              aria-label="Закрыть чат"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {processingStage !== "idle" && (
