@@ -18,6 +18,7 @@ export type WidgetAttachment = {
 };
 
 export type WidgetTopics = {
+  hasInstructions: boolean;
   hasCertificates: boolean;
   hasPassports: boolean;
   hasWarrantyFaq: boolean;

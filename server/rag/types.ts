@@ -23,6 +23,7 @@ export interface HybridWeights {
 export interface BoostConfig {
   sectionMatch: number;
   titleMatch: number;
+  titleCoverage: number;
   tagMatch: number;
   skuMatch: number;
   instructionPriority: number;

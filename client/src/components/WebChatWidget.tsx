@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, type CSSProperties } from "react";
 import { Loader2, Send, X, MessageCircle } from "lucide-react";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
-import { WidgetApiClient, type WidgetAttachment, type WidgetDocumentType } from "@/widget/api";
+import { WidgetApiClient, type WidgetAttachment } from "@/widget/api";
 import "@/widget/widget.css";
 
 interface Message {
@@ -11,8 +11,13 @@ interface Message {
   attachments?: WidgetAttachment[];
 }
 
-type ChatTopic = "products" | "certificates" | "passports" | "warranty";
-type ForcedDocType = Exclude<WidgetDocumentType, "instruction" | "general">;
+type ChatTopic = "products" | "instructions" | "certificates" | "passports" | "warranty";
+type ForcedDocType =
+  | "catalog"
+  | "instruction"
+  | "certificate"
+  | "passport"
+  | "warranty_faq";
 
 export interface WebChatWidgetProps {
   title?: string;
@@ -72,6 +77,7 @@ export function WebChatWidget({
   const [topic, setTopic] = useState<ChatTopic | null>(null);
   const [forceDocumentType, setForceDocumentType] = useState<ForcedDocType | null>(null);
   const [availableTopics, setAvailableTopics] = useState({
+    hasInstructions: false,
     hasCertificates: false,
     hasPassports: false,
     hasWarrantyFaq: false,
@@ -84,6 +90,7 @@ export function WebChatWidget({
       .then(setAvailableTopics)
       .catch(() => {
         setAvailableTopics({
+          hasInstructions: false,
           hasCertificates: false,
           hasPassports: false,
           hasWarrantyFaq: false,
@@ -173,21 +180,25 @@ export function WebChatWidget({
     const forced: ForcedDocType =
       picked === "products"
         ? "catalog"
-        : picked === "certificates"
-          ? "certificate"
-          : picked === "passports"
-            ? "passport"
-            : "warranty_faq";
+        : picked === "instructions"
+          ? "instruction"
+          : picked === "certificates"
+            ? "certificate"
+            : picked === "passports"
+              ? "passport"
+              : "warranty_faq";
     setForceDocumentType(forced);
 
     const followUp =
       picked === "products"
         ? "Уточните, пожалуйста: какой товар (артикул/наименование) и что именно нужно — характеристики, подбор/совместимость, комплектация?"
-        : picked === "certificates"
-          ? "Уточните, пожалуйста: по какому товару (артикул/наименование) нужен сертификат и какой именно (например, соответствия/пожарный/гигиенический)?"
-          : picked === "passports"
-            ? "Уточните, пожалуйста: по какому изделию/модели нужен паспорт и какой раздел/параметры вас интересуют?"
-            : "Уточните, пожалуйста: по какому товару (артикул/наименование) вопрос по гарантии и в чём суть обращения (симптом/проблема/дата покупки)?";
+        : picked === "instructions"
+          ? "Уточните, пожалуйста: по какому изделию/системе нужен монтаж или инструкция и какой этап вас интересует?"
+          : picked === "certificates"
+            ? "Уточните, пожалуйста: по какому товару (артикул/наименование) нужен сертификат и какой именно (например, соответствия/пожарный/гигиенический)?"
+            : picked === "passports"
+              ? "Уточните, пожалуйста: по какому изделию/модели нужен паспорт и какой раздел/параметры вас интересуют?"
+              : "Уточните, пожалуйста: по какому товару (артикул/наименование) вопрос по гарантии и в чём суть обращения (симптом/проблема/дата покупки)?";
 
     setMessages((prev) => [
       ...prev,
@@ -272,6 +283,16 @@ export function WebChatWidget({
                   >
                     Вопрос по: Товарам
                   </button>
+                  {availableTopics.hasInstructions && (
+                    <button
+                      type="button"
+                      className={`sanext-widget-topic ${topic === "instructions" ? "sanext-widget-topic-active" : ""}`}
+                      onClick={() => handlePickTopic("instructions")}
+                      disabled={processingStage !== "idle"}
+                    >
+                      Вопрос по: Инструкциям
+                    </button>
+                  )}
                   {availableTopics.hasCertificates && (
                     <button
                       type="button"

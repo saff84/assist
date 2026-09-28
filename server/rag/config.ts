@@ -30,6 +30,7 @@ const DEFAULT_CONFIG: RAGConfig = {
     boosts: {
       sectionMatch: 0.1,
       titleMatch: 0.08,
+      titleCoverage: 0.32,
       tagMatch: 0.05,
       skuMatch: 0.12,
       instructionPriority: 0.2,

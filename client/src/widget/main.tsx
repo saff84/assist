@@ -36,19 +36,26 @@ function findWidgetScript(): HTMLScriptElement | null {
   );
 }
 
+const WIDGET_ASSET_VERSION = "20260928b";
+
 function ensureWidgetStyles(apiBaseUrl: string, script?: HTMLScriptElement | null) {
-  if (document.getElementById("sanext-chat-widget-styles")) {
-    return;
-  }
+  const existing = document.getElementById("sanext-chat-widget-styles") as HTMLLinkElement | null;
 
   let href: string | null = null;
   if (script?.src) {
-    href = script.src.replace(/\.js(\?.*)?$/, ".css$1");
+    href = script.src.replace(/\.js(\?.*)?$/, `.css?v=${WIDGET_ASSET_VERSION}`);
   } else if (apiBaseUrl) {
-    href = `${apiBaseUrl.replace(/\/+$/, "")}/chat-widget.css`;
+    href = `${apiBaseUrl.replace(/\/+$/, "")}/chat-widget.css?v=${WIDGET_ASSET_VERSION}`;
   }
 
   if (!href) return;
+
+  if (existing) {
+    if (existing.href !== href && !existing.href.includes(`v=${WIDGET_ASSET_VERSION}`)) {
+      existing.href = href;
+    }
+    return;
+  }
 
   const link = document.createElement("link");
   link.id = "sanext-chat-widget-styles";

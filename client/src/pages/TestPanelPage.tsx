@@ -63,8 +63,13 @@ const stageLabel = (stage: ProcessingStage) => {
   }
 };
 
-type ChatTopic = "products" | "certificates" | "passports" | "warranty";
-type ForcedDocType = "catalog" | "certificate" | "passport" | "warranty_faq";
+type ChatTopic = "products" | "instructions" | "certificates" | "passports" | "warranty";
+type ForcedDocType =
+  | "catalog"
+  | "instruction"
+  | "certificate"
+  | "passport"
+  | "warranty_faq";
 
 export default function TestPanelPage() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -174,21 +179,25 @@ export default function TestPanelPage() {
     const forced: ForcedDocType =
       picked === "products"
         ? "catalog"
-        : picked === "certificates"
-          ? "certificate"
-          : picked === "passports"
-            ? "passport"
-            : "warranty_faq";
+        : picked === "instructions"
+          ? "instruction"
+          : picked === "certificates"
+            ? "certificate"
+            : picked === "passports"
+              ? "passport"
+              : "warranty_faq";
     setForceDocumentType(forced);
 
     const followUp =
       picked === "products"
         ? "Уточните, пожалуйста: какой товар (артикул/наименование) и что именно нужно — характеристики, подбор/совместимость, комплектация?"
-        : picked === "certificates"
-          ? "Уточните, пожалуйста: по какому товару (артикул/наименование) нужен сертификат и какой именно (например, соответствия/пожарный/гигиенический)?"
-          : picked === "passports"
-            ? "Уточните, пожалуйста: по какому изделию/модели нужен паспорт и какой раздел/параметры вас интересуют?"
-          : "Уточните, пожалуйста: по какому товару (артикул/наименование) вопрос по гарантии и в чём суть обращения (симптом/проблема/дата покупки)?";
+        : picked === "instructions"
+          ? "Уточните, пожалуйста: по какому изделию/системе нужен монтаж или инструкция и какой этап вас интересует?"
+          : picked === "certificates"
+            ? "Уточните, пожалуйста: по какому товару (артикул/наименование) нужен сертификат и какой именно (например, соответствия/пожарный/гигиенический)?"
+            : picked === "passports"
+              ? "Уточните, пожалуйста: по какому изделию/модели нужен паспорт и какой раздел/параметры вас интересуют?"
+              : "Уточните, пожалуйста: по какому товару (артикул/наименование) вопрос по гарантии и в чём суть обращения (симптом/проблема/дата покупки)?";
 
     setMessages((prev) => [
       ...prev,
@@ -245,6 +254,17 @@ export default function TestPanelPage() {
                         >
                           Вопрос по: Товарам
                         </Button>
+                        {availableTopics?.hasInstructions && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={topic === "instructions" ? "default" : "outline"}
+                            onClick={() => handlePickTopic("instructions")}
+                            disabled={processingStage !== "idle"}
+                          >
+                            Вопрос по: Инструкциям
+                          </Button>
+                        )}
                         {availableTopics?.hasCertificates && (
                           <Button
                             type="button"

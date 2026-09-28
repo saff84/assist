@@ -25,6 +25,7 @@ export function registerWidgetRoutes(app: Express) {
 
     try {
       const availability = await documentDb.getDocTypeAvailability([
+        "instruction",
         "certificate",
         "passport",
         "warranty_faq",
@@ -32,6 +33,7 @@ export function registerWidgetRoutes(app: Express) {
       const hasFaqChunks = await faqDb.hasAnyFaqEntries().catch(() => false);
 
       res.json({
+        hasInstructions: availability.instruction,
         hasCertificates: availability.certificate,
         hasPassports: availability.passport,
         hasWarrantyFaq: availability.warranty_faq || hasFaqChunks,
@@ -39,6 +41,7 @@ export function registerWidgetRoutes(app: Express) {
     } catch (error) {
       console.error("[Widget] Failed to load topics:", error);
       res.json({
+        hasInstructions: false,
         hasCertificates: false,
         hasPassports: false,
         hasWarrantyFaq: false,

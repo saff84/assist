@@ -522,6 +522,33 @@ async function computeProductBoosts(
   return matches;
 }
 
+/** Stems that are too common to identify a specific catalog product alone. */
+const GENERIC_PRODUCT_STEMS = new Set([
+  "труб",
+  "фитинг",
+  "издели",
+  "систем",
+  "sanext",
+  "санекст",
+  "каталог",
+  "характеристик",
+  "параметр",
+  "описан",
+  "применен",
+]);
+
+function resolveDocumentTitleTokens(
+  document: DocumentMeta,
+  stopwords: Set<string>
+): string[] {
+  const rawTitle =
+    (typeof document.title === "string" && document.title.trim()) ||
+    (typeof document.filename === "string"
+      ? document.filename.replace(/\.[^.]+$/i, "").replace(/[_-]+/g, " ")
+      : "");
+  return rawTitle ? tokenize(rawTitle, stopwords) : [];
+}
+
 function computeBoosts(
   chunk: RetrieverChunk,
   queryNormalized: string,
@@ -590,14 +617,55 @@ function computeBoosts(
     }
   }
 
-  if (
-    document.title &&
-    tokenize(document.title, stopwords).some((token) =>
-      queryTokenSet.has(token)
-    )
-  ) {
-    total += boosts.titleMatch;
-    reasons.push("title_match");
+  const titleTokens = resolveDocumentTitleTokens(document, stopwords);
+  if (titleTokens.length > 0) {
+    const titleOverlap = titleTokens.filter((token) => queryTokenSet.has(token));
+    if (titleOverlap.length > 0) {
+      total += boosts.titleMatch;
+      reasons.push("title_match");
+
+      const coverage = titleOverlap.length / titleTokens.length;
+      const queryCoverage = titleOverlap.length / Math.max(queryTokens.length, 1);
+      // Prefer the product whose title is largely covered by the query
+      // ("Труба Теплый пол" vs generic "Труба ... без барьера").
+      if (coverage >= 0.5 || (titleOverlap.length >= 2 && queryCoverage >= 0.4)) {
+        const coverageBoost =
+          (boosts.titleCoverage ?? 0.32) *
+          Math.min(1, Math.max(coverage, queryCoverage));
+        total += coverageBoost;
+        reasons.push("title_coverage");
+      }
+      if (coverage >= 0.75 && titleOverlap.length >= 2) {
+        total += 0.2;
+        reasons.push("title_strong_match");
+      }
+    }
+  }
+
+  // If the user named a distinctive product phrase (e.g. "тёплый пол"),
+  // demote catalog chunks that miss those stems in title and content.
+  if (intents.catalog && document.docType === "catalog") {
+    const distinctiveQuery = queryTokens.filter(
+      (token) => !GENERIC_PRODUCT_STEMS.has(token) && token.length >= 3
+    );
+    if (distinctiveQuery.length > 0) {
+      const hitInTitle = distinctiveQuery.some((token) =>
+        titleTokens.includes(token)
+      );
+      const hitInContent = distinctiveQuery.some((token) => {
+        if (chunk.termFrequency?.has(token)) return true;
+        // Avoid short-stem substring false positives (e.g. "пол" in "полностью")
+        if (token.length < 4) return false;
+        return chunk.content.toLowerCase().includes(token);
+      });
+      if (!hitInTitle && !hitInContent) {
+        total -= 0.35;
+        reasons.push("missing_distinctive_terms");
+      } else if (hitInTitle) {
+        total += 0.18;
+        reasons.push("distinctive_title_hit");
+      }
+    }
   }
 
   if (chunk.tags && chunk.tags.length > 0) {
@@ -615,15 +683,24 @@ function computeBoosts(
       ? ((chunk.metadata as any).productVariantNormalized as string)
       : typeof (chunk.metadata as any)?.variantNormalized === "string"
       ? ((chunk.metadata as any).variantNormalized as string)
+      : typeof (chunk.metadata as any)?.productItemName === "string"
+      ? ((chunk.metadata as any).productItemName as string)
+      : typeof (chunk.metadata as any)?.itemName === "string"
+      ? ((chunk.metadata as any).itemName as string)
       : null;
   if (boosts.variantMatch > 0 && variantNormalized) {
     const variantTokens = tokenize(variantNormalized, stopwords);
-    const hasVariantMatch = variantTokens.some((token) =>
+    const matchedVariant = variantTokens.filter((token) =>
       queryTokenSet.has(token)
     );
-    if (hasVariantMatch) {
+    if (matchedVariant.length > 0) {
       total += boosts.variantMatch;
       reasons.push("variant_match");
+      const vCoverage = matchedVariant.length / Math.max(variantTokens.length, 1);
+      if (vCoverage >= 0.5 && matchedVariant.length >= 2) {
+        total += boosts.variantMatch * 0.5;
+        reasons.push("variant_strong_match");
+      }
     }
   }
 

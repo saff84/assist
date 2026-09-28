@@ -370,6 +370,7 @@ export const documentRouter = router({
   getAvailableChatTopics: publicProcedure.query(async () => {
     try {
       const availability = await documentDb.getDocTypeAvailability([
+        "instruction",
         "certificate",
         "passport",
         "warranty_faq",
@@ -377,6 +378,7 @@ export const documentRouter = router({
 
       const hasFaqChunks = await faqDb.hasAnyFaqEntries().catch(() => false);
       return {
+        hasInstructions: availability.instruction,
         hasCertificates: availability.certificate,
         hasPassports: availability.passport,
         hasWarrantyFaq: availability.warranty_faq || hasFaqChunks,
@@ -385,6 +387,7 @@ export const documentRouter = router({
       console.error("Error getting available chat topics:", error);
       // Fail-open: hide optional topics on error
       return {
+        hasInstructions: false,
         hasCertificates: false,
         hasPassports: false,
         hasWarrantyFaq: false,
