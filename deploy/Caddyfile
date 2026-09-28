@@ -5,5 +5,12 @@ assist.sanext.ru {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 	}
 
-	reverse_proxy 127.0.0.1:3000
+	# RAG + external LLM can exceed default proxy timeouts
+	reverse_proxy 127.0.0.1:3000 {
+		transport http {
+			read_timeout 120s
+			write_timeout 120s
+			dial_timeout 10s
+		}
+	}
 }

@@ -1,6 +1,7 @@
 import { createRoot, type Root } from "react-dom/client";
 import { WebChatWidget, type WebChatWidgetProps } from "@/components/WebChatWidget";
 import "@/index.css";
+import "@/widget/widget.css";
 
 export type SanextChatWidgetOptions = WebChatWidgetProps & {
   apiBaseUrl?: string;

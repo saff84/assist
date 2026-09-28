@@ -64,7 +64,14 @@ export class WidgetApiClient {
     });
 
     if (!response.ok) {
-      throw new Error("Failed to send message");
+      let detail = "";
+      try {
+        const body = (await response.json()) as { error?: string };
+        if (body?.error) detail = `: ${body.error}`;
+      } catch {
+        // ignore non-JSON error bodies
+      }
+      throw new Error(`Failed to send message (${response.status})${detail}`);
     }
 
     return response.json() as Promise<WidgetChatResponse>;

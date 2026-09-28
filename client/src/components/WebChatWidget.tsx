@@ -1,9 +1,8 @@
-import { useState, useRef, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { useState, useRef, useEffect, type CSSProperties } from "react";
 import { Loader2, Send, X, MessageCircle } from "lucide-react";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 import { WidgetApiClient, type WidgetAttachment, type WidgetDocumentType } from "@/widget/api";
+import "@/widget/widget.css";
 
 interface Message {
   id: string;
@@ -54,8 +53,8 @@ function resolveApiBaseUrl(apiBaseUrl?: string): string {
 }
 
 export function WebChatWidget({
-  title = "AI Assistant",
-  subtitle = "Ask me anything",
+  title = "SANEXT Assistant",
+  subtitle = "Задайте вопрос по товарам",
   position = "bottom-right",
   apiBaseUrl,
 }: WebChatWidgetProps) {
@@ -150,8 +149,9 @@ export function WebChatWidget({
         forceDocumentType,
       });
       appendAssistantMessage(response.response, response.attachments ?? []);
-    } catch {
+    } catch (error) {
       setProcessingStage("idle");
+      console.error("[SANEXT Widget] chat failed:", error);
       setMessages((prev) => [
         ...prev,
         {
@@ -199,166 +199,171 @@ export function WebChatWidget({
     ]);
   };
 
-  const positionClasses = position === "bottom-right" ? "bottom-4 right-4" : "bottom-4 left-4";
+  const positionStyle: CSSProperties =
+    position === "bottom-left"
+      ? { bottom: "1.25rem", left: "1.25rem" }
+      : { bottom: "1.25rem", right: "1.25rem" };
 
   if (!isOpen) {
     return (
-      <button
-        onClick={() => setIsOpen(true)}
-        className={`fixed ${positionClasses} z-[2147483000] p-4 bg-primary text-primary-foreground rounded-full shadow-lg hover:shadow-xl transition-shadow`}
-        aria-label="Open chat"
-      >
-        <MessageCircle className="w-6 h-6" />
-      </button>
+      <div className="sanext-widget" style={{ position: "fixed", zIndex: 2147483000, ...positionStyle }}>
+        <button
+          type="button"
+          onClick={() => setIsOpen(true)}
+          className="sanext-widget-launcher"
+          aria-label="Открыть чат SANEXT"
+        >
+          <MessageCircle className="w-7 h-7" strokeWidth={2.1} />
+        </button>
+      </div>
     );
   }
 
   return (
-    <div
-      className={`fixed ${positionClasses} z-[2147483000] w-96 h-[32rem] max-h-[calc(100vh-2rem)] bg-background border rounded-lg shadow-xl flex flex-col min-h-0 overflow-hidden`}
-    >
-      <div className="bg-primary text-primary-foreground p-4 rounded-t-lg flex justify-between items-center">
-        <div>
-          <h3 className="font-semibold">{title}</h3>
-          <p className="text-xs opacity-90">{subtitle}</p>
+    <div className="sanext-widget" style={{ position: "fixed", zIndex: 2147483000, ...positionStyle }}>
+      <div className="sanext-widget-panel">
+        <div className="sanext-widget-header">
+          <div className="sanext-widget-brand">
+            <span className="sanext-widget-brand-eyebrow">SANEXT</span>
+            <h3 className="sanext-widget-brand-title">{title}</h3>
+            <p className="sanext-widget-brand-subtitle">{subtitle}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsOpen(false)}
+            className="sanext-widget-close"
+            aria-label="Закрыть чат"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
-        <button
-          onClick={() => setIsOpen(false)}
-          className="hover:bg-primary-foreground/20 p-1 rounded transition"
-          aria-label="Close chat"
-        >
-          <X className="w-4 h-4" />
-        </button>
-      </div>
 
-      {processingStage !== "idle" && (
-        <div className="px-4 py-1 border-b">
-          <ProcessingTimeline stage={processingStage} />
-        </div>
-      )}
+        {processingStage !== "idle" && (
+          <div className="sanext-widget-stage">
+            <ProcessingTimeline stage={processingStage} />
+          </div>
+        )}
 
-      {isSending && (
-        <div className="flex justify-start px-4 pt-2">
-          <div className="w-full px-3 py-2 rounded-lg bg-muted text-foreground">
-            <div className="flex items-center gap-2 text-sm">
-              <Loader2 className="w-3 h-3 animate-spin" />
-              <span>{stageLabel(processingStage === "idle" ? "think" : processingStage)}</span>
+        {isSending && (
+          <div className="px-4 pt-3">
+            <div className="sanext-widget-bubble sanext-widget-bubble-assistant">
+              <div className="flex items-center gap-2 text-sm text-[var(--sx-muted)]">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--sx-blue-deep)]" />
+                <span>{stageLabel(processingStage === "idle" ? "think" : processingStage)}</span>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
-        {messages.length === 0 ? (
-          <div className="space-y-3">
-            <div className="flex justify-start">
-              <div className="w-full px-3 py-2 rounded-lg bg-muted text-foreground text-sm">
-                <div className="font-medium mb-1">Здравствуйте!</div>
-                <div className="text-muted-foreground">
+        <div className="sanext-widget-messages space-y-3">
+          {messages.length === 0 ? (
+            <div className="space-y-3">
+              <div className="sanext-widget-bubble sanext-widget-bubble-assistant">
+                <div className="font-semibold mb-1 text-[15px]">Здравствуйте!</div>
+                <div className="text-[var(--sx-muted)] text-[13px]">
                   Чтобы точнее искать по базе знаний, выберите тематику вопроса:
                 </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button
+                <div className="sanext-widget-topics">
+                  <button
                     type="button"
-                    size="sm"
-                    variant={topic === "products" ? "default" : "outline"}
+                    className={`sanext-widget-topic ${topic === "products" ? "sanext-widget-topic-active" : ""}`}
                     onClick={() => handlePickTopic("products")}
                     disabled={processingStage !== "idle"}
                   >
                     Вопрос по: Товарам
-                  </Button>
+                  </button>
                   {availableTopics.hasCertificates && (
-                    <Button
+                    <button
                       type="button"
-                      size="sm"
-                      variant={topic === "certificates" ? "default" : "outline"}
+                      className={`sanext-widget-topic ${topic === "certificates" ? "sanext-widget-topic-active" : ""}`}
                       onClick={() => handlePickTopic("certificates")}
                       disabled={processingStage !== "idle"}
                     >
                       Вопрос по: Сертификатам
-                    </Button>
+                    </button>
                   )}
                   {availableTopics.hasPassports && (
-                    <Button
+                    <button
                       type="button"
-                      size="sm"
-                      variant={topic === "passports" ? "default" : "outline"}
+                      className={`sanext-widget-topic ${topic === "passports" ? "sanext-widget-topic-active" : ""}`}
                       onClick={() => handlePickTopic("passports")}
                       disabled={processingStage !== "idle"}
                     >
                       Вопрос по: Паспортам
-                    </Button>
+                    </button>
                   )}
                   {availableTopics.hasWarrantyFaq && (
-                    <Button
+                    <button
                       type="button"
-                      size="sm"
-                      variant={topic === "warranty" ? "default" : "outline"}
+                      className={`sanext-widget-topic ${topic === "warranty" ? "sanext-widget-topic-active" : ""}`}
                       onClick={() => handlePickTopic("warranty")}
                       disabled={processingStage !== "idle"}
                     >
                       Вопрос по: По гарантии
-                    </Button>
+                    </button>
                   )}
                 </div>
               </div>
-            </div>
 
-            <div className="flex items-center justify-center h-48 text-muted-foreground text-xs">
-              <p>
+              <p className="sanext-widget-hint">
                 {forceDocumentType
                   ? "Теперь ответьте на уточняющий вопрос выше и отправьте сообщение."
                   : "Сначала выберите тематику."}
               </p>
             </div>
-          </div>
-        ) : (
-          messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex ${msg.type === "user" ? "justify-end" : "justify-start"}`}
-            >
+          ) : (
+            messages.map((msg) => (
               <div
-                className={`w-full px-3 py-2 rounded-lg text-sm ${
-                  msg.type === "user"
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted text-foreground"
-                }`}
+                key={msg.id}
+                className={`flex ${msg.type === "user" ? "justify-end" : "justify-start"}`}
               >
-                {msg.type === "assistant" ? (
-                  <MarkdownRenderer content={msg.content} />
-                ) : (
-                  msg.content
-                )}
-                {msg.type === "assistant" && msg.attachments && msg.attachments.length > 0 && (
-                  <div className="mt-2">
-                    <MessageAttachments attachments={msg.attachments} />
-                  </div>
-                )}
+                <div
+                  className={`sanext-widget-bubble ${
+                    msg.type === "user"
+                      ? "sanext-widget-bubble-user"
+                      : "sanext-widget-bubble-assistant"
+                  }`}
+                >
+                  {msg.type === "assistant" ? (
+                    <MarkdownRenderer content={msg.content} />
+                  ) : (
+                    msg.content
+                  )}
+                  {msg.type === "assistant" && msg.attachments && msg.attachments.length > 0 && (
+                    <div className="mt-2">
+                      <MessageAttachments attachments={msg.attachments} />
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))
-        )}
-        <div ref={messagesEndRef} />
-      </div>
+            ))
+          )}
+          <div ref={messagesEndRef} />
+        </div>
 
-      <div className="border-t p-3 flex gap-2">
-        <Input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-          placeholder={forceDocumentType ? "Введите сообщение..." : "Выберите тематику выше..."}
-          disabled={isSending || processingStage !== "idle" || !forceDocumentType}
-          className="text-sm"
-        />
-        <Button
-          onClick={handleSendMessage}
-          disabled={!input.trim() || isSending || processingStage !== "idle" || !forceDocumentType}
-          size="sm"
-          className="gap-1"
-        >
-          {isSending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
-        </Button>
+        <div className="sanext-widget-footer">
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
+            placeholder={forceDocumentType ? "Введите сообщение..." : "Выберите тематику выше..."}
+            disabled={isSending || processingStage !== "idle" || !forceDocumentType}
+            className="sanext-widget-input"
+          />
+          <button
+            type="button"
+            onClick={handleSendMessage}
+            disabled={!input.trim() || isSending || processingStage !== "idle" || !forceDocumentType}
+            className="sanext-widget-send"
+            aria-label="Отправить"
+          >
+            {isSending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Send className="w-4 h-4" />
+            )}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -376,35 +381,32 @@ function MessageAttachments({ attachments }: { attachments: WidgetAttachment[] }
           doc.fileType.toLowerCase() === "pdf" || doc.filename.toLowerCase().endsWith(".pdf");
 
         return (
-          <div key={`${doc.type}-${doc.documentId}`} className="rounded-md border bg-background/60 p-2">
+          <div key={`${doc.type}-${doc.documentId}`} className="sanext-widget-attach">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
                 <div className="text-xs font-semibold truncate">{title}</div>
-                <div className="text-[11px] text-muted-foreground truncate">{doc.filename}</div>
+                <div className="text-[11px] text-[var(--sx-muted)] truncate">{doc.filename}</div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="sanext-widget-attach-actions">
                 <a
                   href={doc.previewUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex h-7 items-center justify-center rounded-md border px-2 text-xs hover:bg-muted"
+                  className="sanext-widget-attach-link"
                 >
                   Открыть
                 </a>
-                <a
-                  href={doc.downloadUrl}
-                  className="inline-flex h-7 items-center justify-center rounded-md border px-2 text-xs hover:bg-muted"
-                >
+                <a href={doc.downloadUrl} className="sanext-widget-attach-link">
                   Скачать
                 </a>
               </div>
             </div>
             {isPdf && (
-              <div className="mt-2 overflow-hidden rounded border bg-background">
+              <div className="mt-2 overflow-hidden rounded-lg border border-[var(--sx-border)] bg-white">
                 <iframe
                   title={`preview-${doc.documentId}`}
                   src={doc.previewUrl}
-                  className="h-48 w-full"
+                  className="h-52 w-full"
                 />
               </div>
             )}
@@ -419,18 +421,24 @@ function ProcessingTimeline({ stage }: { stage: ProcessingStage }) {
   if (stage === "idle") return null;
   const activeIndex = stageOrder.indexOf(stage);
   return (
-    <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+    <div className="flex items-center gap-2 text-[11px] text-[var(--sx-muted)]">
       {stageOrder.map((key, idx) => (
         <div key={key} className="flex items-center gap-1">
           <div
-            className={`h-2 w-2 rounded-full ${
-              idx <= activeIndex ? "bg-primary animate-pulse" : "bg-muted-foreground/40"
+            className={`sanext-widget-stage-dot ${
+              idx <= activeIndex ? "sanext-widget-stage-dot-active" : ""
             }`}
           />
-          <span className={idx === activeIndex ? "text-primary font-semibold" : ""}>
+          <span
+            className={
+              idx === activeIndex ? "text-[var(--sx-blue-deep)] font-semibold" : undefined
+            }
+          >
             {stageLabels[key]}
           </span>
-          {idx < stageOrder.length - 1 && <div className="h-px w-4 bg-border opacity-70" />}
+          {idx < stageOrder.length - 1 && (
+            <div className="h-px w-4 bg-[var(--sx-border)] opacity-80" />
+          )}
         </div>
       ))}
     </div>
