@@ -495,8 +495,52 @@ const GENERIC_PRODUCT_STEMS = new Set([
   "параметр",
   "описан",
   "применен",
+  // Intent / boilerplate — not product identity
+  "монтаж",
+  "монтир",
+  "монтировать",
+  "смонтировать",
+  "установ",
+  "устанавливать",
+  "установить",
+  "подключ",
+  "подключать",
+  "подключить",
+  "инструкц",
+  "номенклатур",
+  "раздел",
+  "документ",
+  "баз",
+  "знан",
 ]);
 
+/** Product/topic stems from the query (excludes intent fluff). */
+function extractDistinctiveQueryTokens(queryTokens: string[]): string[] {
+  return queryTokens.filter(
+    (token) => !GENERIC_PRODUCT_STEMS.has(token) && token.length >= 4
+  );
+}
+
+function chunkHitsDistinctiveTerms(
+  distinctiveQuery: string[],
+  titleTokens: string[],
+  chunk: RetrieverChunk
+): { hitInTitle: boolean; hitInContent: boolean } {
+  const hitInTitle = distinctiveQuery.some((token) => titleTokens.includes(token));
+  const hitInContent = distinctiveQuery.some((token) => {
+    if (chunk.termFrequency?.has(token)) return true;
+    if (token.length < 4) return false;
+    const content = chunk.content.toLowerCase();
+    if (content.includes(token)) return true;
+    // Soft prefix: теплосчетчик ↔ теплосчётчик / теплосчетчик*
+    return Array.from(chunk.termFrequency?.keys() ?? []).some(
+      (term) =>
+        term.startsWith(token.slice(0, Math.min(6, token.length))) ||
+        token.startsWith(term.slice(0, Math.min(6, term.length)))
+    );
+  });
+  return { hitInTitle, hitInContent };
+}
 function resolveDocumentTitleTokens(
   document: DocumentMeta,
   stopwords: Set<string>
@@ -602,29 +646,46 @@ function computeBoosts(
     }
   }
 
-  // If the user named a distinctive product phrase (e.g. "тёплый пол"),
-  // demote catalog chunks that miss those stems in title and content.
-  if (intents.catalog && document.docType === "catalog") {
-    const distinctiveQuery = queryTokens.filter(
-      (token) => !GENERIC_PRODUCT_STEMS.has(token) && token.length >= 3
+  // Product/topic gate: demote chunks that miss distinctive query terms
+  // (e.g. "теплосчетчики" must not pull STP_B nomenclature).
+  const distinctiveQuery = extractDistinctiveQueryTokens(queryTokens);
+  if (distinctiveQuery.length > 0) {
+    const { hitInTitle, hitInContent } = chunkHitsDistinctiveTerms(
+      distinctiveQuery,
+      titleTokens,
+      chunk
     );
-    if (distinctiveQuery.length > 0) {
-      const hitInTitle = distinctiveQuery.some((token) =>
-        titleTokens.includes(token)
-      );
-      const hitInContent = distinctiveQuery.some((token) => {
-        if (chunk.termFrequency?.has(token)) return true;
-        // Avoid short-stem substring false positives (e.g. "пол" in "полностью")
-        if (token.length < 4) return false;
-        return chunk.content.toLowerCase().includes(token);
-      });
-      if (!hitInTitle && !hitInContent) {
-        total -= 0.35;
-        reasons.push("missing_distinctive_terms");
-      } else if (hitInTitle) {
-        total += 0.18;
-        reasons.push("distinctive_title_hit");
-      }
+    const applyGate =
+      (intents.catalog && document.docType === "catalog") ||
+      (intents.installation && document.docType === "instruction") ||
+      document.docType === "instruction";
+
+    if (applyGate && !hitInTitle && !hitInContent) {
+      total -= intents.installation ? 0.55 : 0.35;
+      reasons.push("missing_distinctive_terms");
+    } else if (hitInTitle) {
+      total += intents.installation ? 0.28 : 0.18;
+      reasons.push("distinctive_title_hit");
+    } else if (hitInContent && intents.installation) {
+      total += 0.12;
+      reasons.push("distinctive_content_hit");
+    }
+  }
+
+  // Installation Q&A: nomenclature/SKU tables are not mounting steps
+  if (intents.installation && document.docType === "instruction") {
+    const sectionBlob = `${chunk.sectionPath ?? ""} ${
+      chunk.metadata?.section ?? ""
+    } ${chunk.heading ?? ""}`.toLowerCase();
+    const head = chunk.content.slice(0, 400).toLowerCase();
+    const looksLikeNomenclature =
+      sectionBlob.includes("номенклатур") ||
+      head.includes("[таблица номенклатуры") ||
+      (head.includes("артикул") &&
+        !/монтаж|установ|подключ|креплен/.test(head));
+    if (looksLikeNomenclature) {
+      total -= 0.4;
+      reasons.push("installation_nomenclature_penalty");
     }
   }
 
@@ -741,6 +802,36 @@ function computeBoosts(
     }
   }
 
+  // Heat meters (теплосчётчики) — same pattern as radiators
+  const heatMeterQuery =
+    intents.installation &&
+    (queryNormalized.includes("теплосчет") ||
+      queryNormalized.includes("теплосчёт") ||
+      queryTokens.some(
+        (token) =>
+          token.startsWith("теплосчет") || token.startsWith("теплосчёт")
+      ));
+  if (heatMeterQuery) {
+    const contentLower = chunk.content.toLowerCase();
+    const titleHit = titleTokens.some(
+      (t) => t.startsWith("теплосчет") || t.startsWith("теплосчёт")
+    );
+    const contentHit =
+      contentLower.includes("теплосчет") ||
+      contentLower.includes("теплосчёт") ||
+      chunk.termFrequency?.has("теплосчетчик") ||
+      Array.from(chunk.termFrequency?.keys() ?? []).some((t) =>
+        t.startsWith("теплосчет")
+      );
+    if (titleHit || contentHit) {
+      total += boosts.radiatorSectionPriority ?? 0.35;
+      reasons.push("heat_meter_keyword");
+    } else if (document.docType === "instruction") {
+      total -= 0.25;
+      reasons.push("heat_meter_mismatch");
+    }
+  }
+
   return { totalBoost: total, reasons };
 }
 
@@ -754,8 +845,11 @@ async function retrieveAndScoreChunks(
   const queryNormalized = normalizeToken(query);
   const skuTokens = extractSkuCandidates(query);
   const intents = {
-    installation: hasInstallationIntent(query),
-    catalog: hasCatalogIntent(query),
+    installation:
+      hasInstallationIntent(query) ||
+      options?.forceDocumentType === "instruction",
+    catalog:
+      hasCatalogIntent(query) || options?.forceDocumentType === "catalog",
   };
 
   const { chunks: rawChunks, documentMeta } = await fetchRawChunks(config);
@@ -904,13 +998,20 @@ async function retrieveAndScoreChunks(
 
 function enforceContextCaps(
   chunks: ScoredChunk[],
-  documentMeta: Map<number, DocumentMeta>,
-  config: RAGConfig
+  _documentMeta: Map<number, DocumentMeta>,
+  config: RAGConfig,
+  options?: {
+    queryTokens?: string[];
+    installation?: boolean;
+  }
 ): { limited: ScoredChunk[]; selectedDocs: Map<number, ScoredChunk[]> } {
   const caps = config.retrieval.contextCaps;
   if (!chunks.length) {
     return { limited: [], selectedDocs: new Map() };
   }
+
+  const distinctive = extractDistinctiveQueryTokens(options?.queryTokens ?? []);
+  const stopwords = createStopwordSet(config.retrieval.stopwords.extra);
 
   const grouped = new Map<number, ScoredChunk[]>();
   chunks.forEach((chunk) => {
@@ -929,11 +1030,42 @@ function enforceContextCaps(
       const avg =
         list.reduce((sum, chunk) => sum + chunk.relevance, 0) /
         (list.length || 1);
-      return { documentId, avg, list };
+      const titleTokens = resolveDocumentTitleTokens(
+        {
+          id: documentId,
+          filename: list[0]?.filename ?? "",
+          docType: list[0]?.docType ?? "general",
+          processingType: list[0]?.processingType ?? "general",
+          title: null,
+        },
+        stopwords
+      );
+      // Prefer filename/title tokens from first chunk's known fields
+      const fileTokens = tokenize(
+        (list[0]?.filename ?? "").replace(/\.[^.]+$/i, "").replace(/[_-]+/g, " "),
+        stopwords
+      );
+      const hitsDistinctive =
+        distinctive.length === 0 ||
+        list.some((chunk) => {
+          const { hitInTitle, hitInContent } = chunkHitsDistinctiveTerms(
+            distinctive,
+            [...titleTokens, ...fileTokens],
+            chunk
+          );
+          return hitInTitle || hitInContent;
+        });
+      return { documentId, avg, list, hitsDistinctive };
     }
   );
 
-  docAverages.sort((a, b) => b.avg - a.avg);
+  docAverages.sort((a, b) => {
+    // Prefer docs that match product terms when available
+    if (a.hitsDistinctive !== b.hitsDistinctive) {
+      return a.hitsDistinctive ? -1 : 1;
+    }
+    return b.avg - a.avg;
+  });
 
   const selected: ScoredChunk[] = [];
   const selectedPerDoc = new Map<number, ScoredChunk[]>();
@@ -948,10 +1080,7 @@ function enforceContextCaps(
     Math.max(1, Math.round(caps.maxChunks * 0.8))
   );
 
-  const secondaryLimit = Math.max(
-    1,
-    caps.maxChunks - primaryLimit
-  );
+  const secondaryLimit = Math.max(1, caps.maxChunks - primaryLimit);
 
   const addChunks = (
     list: ScoredChunk[],
@@ -973,15 +1102,26 @@ function enforceContextCaps(
 
   addChunks(primaryDoc.list, primaryLimit, primaryDoc.documentId);
 
+  // Stricter secondary gate for installation: only product-matching docs,
+  // and only if scores are close to primary.
+  const maxSecondaryDocs = options?.installation ? 1 : 3;
+  let secondaryAdded = 0;
   for (let i = 1; i < docAverages.length; i += 1) {
     const doc = docAverages[i];
     if (selected.length >= caps.maxChunks) break;
+    if (secondaryAdded >= maxSecondaryDocs) break;
+
+    if (options?.installation && distinctive.length > 0 && !doc.hitsDistinctive) {
+      continue;
+    }
+
+    const difference = Math.abs(primaryDoc.avg - doc.avg);
+    const scoreGate = options?.installation ? 0.08 : 0.15;
+    if (difference > scoreGate) continue;
 
     const limit = Math.min(caps.maxChunksPerDoc, secondaryLimit);
-    const difference = Math.abs(primaryDoc.avg - doc.avg);
-    if (difference <= 0.15) {
-      addChunks(doc.list, limit, doc.documentId);
-    }
+    addChunks(doc.list, limit, doc.documentId);
+    secondaryAdded += 1;
   }
 
   return { limited: selected, selectedDocs: selectedPerDoc };
@@ -1618,28 +1758,43 @@ async function buildAttachmentsForSources(
   entries: ContextSourceEntry[],
   documentMeta: Map<number, DocumentMeta>
 ): Promise<NonNullable<RAGResponse["attachments"]>> {
-  const seen = new Set<number>();
+  // Rank docs by how many / how strong chunks they contributed; attach at most 2.
+  const byDoc = new Map<
+    number,
+    { entry: ContextSourceEntry; score: number; count: number }
+  >();
+  for (const entry of entries) {
+    const prev = byDoc.get(entry.documentId);
+    const score = (entry.relevance ?? 0) + (prev?.score ?? 0);
+    const count = (prev?.count ?? 0) + 1;
+    byDoc.set(entry.documentId, {
+      entry: prev?.entry ?? entry,
+      score,
+      count,
+    });
+  }
+
+  const ranked = Array.from(byDoc.entries())
+    .sort((a, b) => b[1].score - a[1].score || b[1].count - a[1].count)
+    .slice(0, 2);
+
   const attachments: NonNullable<RAGResponse["attachments"]> = [];
 
-  for (const entry of entries) {
-    if (seen.has(entry.documentId)) continue;
-    seen.add(entry.documentId);
-
+  for (const [documentId, { entry }] of ranked) {
     let downloadFilename: string | null =
-      ((documentMeta.get(entry.documentId) as any)?.downloadFilename as
+      ((documentMeta.get(documentId) as any)?.downloadFilename as
         | string
         | null
         | undefined) ?? null;
-    let title =
-      documentMeta.get(entry.documentId)?.title ?? null;
+    let title = documentMeta.get(documentId)?.title ?? null;
     let fileType = "pdf";
     let docType = (entry.documentType ??
-      documentMeta.get(entry.documentId)?.docType ??
+      documentMeta.get(documentId)?.docType ??
       "general") as DocumentType;
     let filename = entry.filename;
 
     try {
-      const doc = await documentDb.getDocumentById(entry.documentId);
+      const doc = await documentDb.getDocumentById(documentId);
       if (doc) {
         downloadFilename =
           (typeof (doc as any).downloadFilename === "string" &&
@@ -1666,7 +1821,7 @@ async function buildAttachmentsForSources(
 
     attachments.push(
       buildDocumentAttachment({
-        id: entry.documentId,
+        id: documentId,
         filename,
         title,
         fileType,
@@ -2995,8 +3150,11 @@ export async function processRAGQuery(
   // For catalog questions (characteristics, description) - use only catalog documents
   // For installation questions - use only instruction documents
   const intents = {
-    installation: hasInstallationIntent(ragQuery.query),
-    catalog: hasCatalogIntent(ragQuery.query),
+    installation:
+      hasInstallationIntent(ragQuery.query) ||
+      forcedDocType === "instruction",
+    catalog:
+      hasCatalogIntent(ragQuery.query) || forcedDocType === "catalog",
   };
   const requestedCatalogAttribute = intents.catalog
     ? extractRequestedCatalogAttribute(ragQuery.query)
@@ -3108,7 +3266,14 @@ export async function processRAGQuery(
   const { limited, selectedDocs } = enforceContextCaps(
     augmentedChunks,
     retrieval.documentMeta,
-    config
+    config,
+    {
+      queryTokens: tokenize(
+        ragQuery.query,
+        createStopwordSet(config.retrieval.stopwords.extra)
+      ),
+      installation: intents.installation || forcedDocType === "instruction",
+    }
   );
 
   const topRelevance = limited[0]?.relevance ?? 0;
