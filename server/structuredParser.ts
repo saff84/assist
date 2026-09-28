@@ -1338,6 +1338,11 @@ function loadExternalTablesForPage(
   pageNumber: number
 ): ExternalExtractedTable[] | null {
   if (!fs.existsSync(TABLE_EXTRACTOR_SCRIPT_PATH)) {
+    const msg = `[StructuredParser] Table extractor script missing: ${TABLE_EXTRACTOR_SCRIPT_PATH}`;
+    console.error(msg);
+    if (process.env.TABLE_EXTRACTOR_REQUIRED === "true") {
+      throw new Error(msg);
+    }
     return null;
   }
 
@@ -1362,6 +1367,10 @@ function loadExternalTablesForPage(
 
       const parsed = JSON.parse(stdout);
       if (!parsed || parsed.ok === false) {
+        console.warn(
+          `[StructuredParser] Table extractor returned ok=false for page ${pageNumber}:`,
+          parsed?.error || "unknown"
+        );
         return [];
       }
 
@@ -1378,11 +1387,20 @@ function loadExternalTablesForPage(
         .filter((table) => table.columns.length >= 2 && table.rows.length > 0);
 
       return tables;
-    } catch {
+    } catch (error) {
+      console.warn(
+        `[StructuredParser] Table extractor failed with "${pythonCmd}" on page ${pageNumber}:`,
+        error instanceof Error ? error.message : String(error)
+      );
       // Try next python command candidate.
     }
   }
 
+  const msg = `[StructuredParser] No working Python table extractor for page ${pageNumber} (set TABLE_EXTRACTOR_PYTHON or TABLE_EXTRACTOR_REQUIRED=true to fail hard)`;
+  console.error(msg);
+  if (process.env.TABLE_EXTRACTOR_REQUIRED === "true") {
+    throw new Error(msg);
+  }
   return null;
 }
 

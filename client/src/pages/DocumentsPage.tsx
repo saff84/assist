@@ -122,7 +122,7 @@ export default function DocumentsPage() {
     const files = e.currentTarget.files;
     if (!files || files.length === 0) return;
 
-    const supportedFormats = [".pdf", ".xlsx", ".xls", ".docx", ".md", ".markdown"];
+    const supportedFormats = [".pdf", ".xlsx", ".docx", ".md", ".markdown"];
     const selected = Array.from(files);
 
     if (processingType === "catalog_single") {
@@ -693,7 +693,7 @@ export default function DocumentsPage() {
                   ref={fileInputRef}
                   type="file"
                   onChange={handleFileSelect}
-                  accept=".pdf,.xlsx,.xls,.docx,.md,.markdown"
+                  accept=".pdf,.xlsx,.docx,.md,.markdown"
                   multiple={processingType === "catalog_single"}
                   className="hidden"
                 />

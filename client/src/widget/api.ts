@@ -24,9 +24,19 @@ export type WidgetTopics = {
   hasWarrantyFaq: boolean;
 };
 
+export type WidgetSource = {
+  documentId: number;
+  filename: string;
+  chunkIndex: number;
+  relevance: number;
+  pageNumber?: number;
+  sectionPath?: string | null;
+};
+
 export type WidgetChatResponse = {
   response: string;
   attachments: WidgetAttachment[];
+  sources?: WidgetSource[];
   responseTime: number;
 };
 

@@ -92,6 +92,13 @@
       "when": 1770001000000,
       "tag": "0019_roles_admin_editor",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1770002000000,
+      "tag": "0020_safe_retrieval_indexes",
+      "breakpoints": true
     }
   ]
 }

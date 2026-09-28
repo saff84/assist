@@ -6,9 +6,8 @@ import type {
 } from "./structuredParser";
 
 /**
- * Parse a Markdown/GFM knowledge file into the same StructuredDocument
- * shape used by PDF/DOCX processors. Headings become sections; pipe tables
- * become table elements with typed rows — ideal for RAG (no OCR noise).
+ * Parse a Markdown/GFM knowledge file into StructuredDocument.
+ * Headings become hierarchical sections (1 / 1.1 / 1.1.1); pipe tables → rows.
  */
 export async function parseMarkdownDocument(
   filePath: string
@@ -23,10 +22,11 @@ export async function parseMarkdownDocument(
   let title: string | undefined;
   let currentSectionPath = "root";
   let currentHeading = pathBasenameTitle(filePath);
-  let sectionCounter = 0;
   let buffer: string[] = [];
   const pageNumber = 1;
-  let hasExplicitHeading = false;
+  /** counters[level-1] for hierarchical paths */
+  const counters = [0, 0, 0, 0, 0, 0];
+  let lastLevel = 0;
 
   const flushText = () => {
     const content = buffer.join("\n").trim();
@@ -56,21 +56,33 @@ export async function parseMarkdownDocument(
 
   const startSection = (level: number, headingTitle: string) => {
     flushText();
-    hasExplicitHeading = true;
-    sectionCounter += 1;
-    currentHeading = headingTitle.trim() || `Раздел ${sectionCounter}`;
-    currentSectionPath = String(sectionCounter);
-    if (!title && level <= 2) {
-      title = currentHeading;
+    const lvl = Math.min(Math.max(level, 1), 6);
+    counters[lvl - 1] += 1;
+    for (let i = lvl; i < counters.length; i++) counters[i] = 0;
+
+    const pathParts: string[] = [];
+    for (let i = 0; i < lvl; i++) {
+      if (counters[i] > 0) pathParts.push(String(counters[i]));
     }
+    currentSectionPath = pathParts.join(".") || "1";
+    currentHeading = headingTitle.trim() || `Раздел ${currentSectionPath}`;
+    if (!title && lvl <= 2) title = currentHeading;
+
+    let parentPath: string | undefined;
+    if (pathParts.length > 1) {
+      parentPath = pathParts.slice(0, -1).join(".");
+    }
+
     sections.push({
       sectionPath: currentSectionPath,
       title: currentHeading,
-      level: Math.min(Math.max(level, 1), 6),
+      level: lvl,
+      parentPath,
       pageStart: pageNumber,
       pageEnd: pageNumber,
       isNumericSection: true,
     });
+    lastLevel = lvl;
   };
 
   const parseTableBlock = (
@@ -163,9 +175,8 @@ export async function parseMarkdownDocument(
   if (elements.length > 0 && sections.length === 0) {
     ensureRootSection();
   }
-  if (!hasExplicitHeading && sections.length === 0) {
-    ensureRootSection();
-  }
+
+  void lastLevel;
 
   return {
     title: title || pathBasenameTitle(filePath),

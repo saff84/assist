@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import multer from "multer";
 import * as path from "path";
 import * as fs from "fs";
+import * as os from "os";
 import * as documentDb from "./documentDb";
 import * as documentProcessor from "./documentProcessor";
 import type { InsertDocumentChunk, InsertSection, InsertProduct } from "../drizzle/schema";
@@ -10,64 +11,27 @@ import { createStopwordSet, tokenize } from "./rag/textProcessing";
 import { getDb } from "./db";
 import { sections } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
+import { requireKnowledgeAuth } from "./_core/httpAuth";
+import { applyWidgetCors } from "./_core/widgetCors";
+import { generateEmbeddingVector } from "./embeddingClient";
 
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "bge-m3";
 const ragConfig = getRagConfig();
 const lexicalStopwords = createStopwordSet(ragConfig.retrieval.stopwords.extra ?? []);
 
 /**
- * Generate embedding for a text chunk using Ollama
+ * Generate embedding for a text chunk using Ollama (shared client).
  */
 async function generateChunkEmbedding(text: string): Promise<number[]> {
-  try {
-    const ollamaUrl =
-      process.env.OLLAMA_URL ||
-      process.env.OLLAMA_BASE_URL ||
-      "http://ollama:11434";
-    const input = text.substring(0, 2000); // Limit for performance
-
-    const request = async (endpoint: string, body: any) => {
-      const response = await fetch(`${ollamaUrl}${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      return response;
-    };
-
-    // Ollama versions differ:
-    // - newer: POST /api/embed { model, input }
-    // - older: POST /api/embeddings { model, prompt }
-    let response = await request("/api/embed", { model: EMBEDDING_MODEL, input });
-    if (response.status === 404) {
-      response = await request("/api/embeddings", { model: EMBEDDING_MODEL, prompt: input });
-    }
-    // Model can still be downloading on first boot; retry once after a short delay.
-    if (response.status === 404) {
-      await new Promise((r) => setTimeout(r, 2000));
-      response = await request("/api/embed", { model: EMBEDDING_MODEL, input });
-      if (response.status === 404) {
-        response = await request("/api/embeddings", { model: EMBEDDING_MODEL, prompt: input });
-      }
-    }
-
-    if (!response.ok) {
-      throw new Error(`Ollama API error: ${response.status}`);
-    }
-
-    const data: any = await response.json();
-    if (Array.isArray(data?.embedding)) {
-      return data.embedding as number[];
-    }
-    if (Array.isArray(data?.embeddings) && Array.isArray(data.embeddings[0])) {
-      return data.embeddings[0] as number[];
-    }
-
-    throw new Error("Invalid embedding response format");
-  } catch (error) {
-    console.error("[Embeddings] Error:", error);
-    throw error;
+  const result = await generateEmbeddingVector(text, {
+    model: EMBEDDING_MODEL,
+    maxChars: 4000,
+    retries: 2,
+  });
+  if (!result.embedding) {
+    throw new Error(result.error || "embedding_failed");
   }
+  return result.embedding;
 }
 
 /**
@@ -192,9 +156,14 @@ function resolveDocumentFilePath(
   return matching ? path.resolve(uploadsDir, matching) : null;
 }
 
-// Configure multer for file uploads
+// Configure multer for file uploads (project-local tmp — portable on Windows/Linux)
+const uploadTmpDir = path.join(process.cwd(), "uploads", "tmp");
+if (!fs.existsSync(uploadTmpDir)) {
+  fs.mkdirSync(uploadTmpDir, { recursive: true });
+}
+
 const upload = multer({
-  dest: "/tmp/uploads",
+  dest: uploadTmpDir,
   limits: {
     fileSize: 100 * 1024 * 1024, // 100MB
   },
@@ -286,9 +255,7 @@ export function registerUploadRoutes(app: Express) {
         `${asAttachment ? "attachment" : "inline"}; filename="${encodedName}"; filename*=UTF-8''${encodedName}`
       );
       res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "GET");
-      // Allow embedding/preview from other origins (e.g., widget on a different site).
+      applyWidgetCors(req, res);
       res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
       
       // Use absolute path for sendFile
@@ -354,8 +321,7 @@ export function registerUploadRoutes(app: Express) {
         `${asAttachment ? "attachment" : "inline"}; filename="${encodedName}"; filename*=UTF-8''${encodedName}`
       );
       res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "GET");
+      applyWidgetCors(req, res);
       res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
       res.sendFile(path.resolve(filePath));
     } catch (error) {
@@ -364,9 +330,10 @@ export function registerUploadRoutes(app: Express) {
     }
   });
 
-  // Upload document endpoint (optional companionPdf for instruction MD → PDF download)
+  // Upload document endpoint (admin/editor only; optional companionPdf for MD → PDF download)
   app.post(
     "/api/upload/document",
+    requireKnowledgeAuth,
     upload.fields([
       { name: "file", maxCount: 1 },
       { name: "companionPdf", maxCount: 1 },
@@ -453,7 +420,26 @@ export function registerUploadRoutes(app: Express) {
           await documentDb.updateDocumentDownloadFilename(documentId, companionName);
           fs.unlinkSync(companion.path);
         } catch (error) {
-          console.warn(`[Upload] Failed to store companion PDF for doc ${documentId}:`, error);
+          console.error(`[Upload] Failed to store companion PDF for doc ${documentId}:`, error);
+          try {
+            fs.unlinkSync(file.path);
+          } catch {
+            // ignore
+          }
+          if (companion?.path && fs.existsSync(companion.path)) {
+            try {
+              fs.unlinkSync(companion.path);
+            } catch {
+              // ignore
+            }
+          }
+          await documentDb.updateDocumentStatus(
+            documentId,
+            "failed",
+            `Не удалось сохранить PDF для скачивания: ${error instanceof Error ? error.message : String(error)}`
+          );
+          res.status(500).json({ error: "Failed to store companion PDF" });
+          return;
         }
       }
 
@@ -899,10 +885,29 @@ async function processDocumentAsync(
     });
 
     console.log(`✅ Generated ${chunkRecords.filter(c => c.embedding).length}/${chunkRecords.length} embeddings`);
+    const withEmbedding = chunkRecords.filter((c) => c.embedding).length;
+    if (chunkRecords.length > 0 && withEmbedding === 0) {
+      throw new Error(
+        `Не удалось сгенерировать эмбеддинги ни для одного чанка (${chunkRecords.length}). Проверьте Ollama/bge-m3 и повторите загрузку.`
+      );
+    }
+    if (chunkRecords.length > 0 && withEmbedding / chunkRecords.length < 0.5) {
+      throw new Error(
+        `Слишком мало эмбеддингов: ${withEmbedding}/${chunkRecords.length} (<50%). Документ не помечен как indexed — исправьте Ollama и повторите загрузку.`
+      );
+    }
+
     await documentDb.insertDocumentChunks(chunkRecords);
     // Sections already saved above, now save products
     await documentDb.replaceDocumentProducts(documentId, productRecords);
-    await documentDb.updateDocumentProgress(documentId, "saving", 90, "Сохраняем данные и обновляем индекс");
+    await documentDb.updateDocumentProgress(
+      documentId,
+      "saving",
+      90,
+      withEmbedding < chunkRecords.length
+        ? `Сохраняем данные (${withEmbedding}/${chunkRecords.length} с эмбеддингами)`
+        : "Сохраняем данные и обновляем индекс"
+    );
 
     // Update document status and metadata
     await documentDb.updateDocumentChunksCount(documentId, processed.chunks.length);

@@ -1,3 +1,4 @@
+import { generateEmbeddingVector } from "./embeddingClient";
 import { eq, desc, sql } from "drizzle-orm";
 
 import {
@@ -145,70 +146,19 @@ async function generateEmbedding(
   text: string,
   config: RAGConfig,
   dimensionsHint?: number
-): Promise<number[]> {
-  const model = config.retrieval.embeddingModel;
-  const ollamaUrl =
-    process.env.OLLAMA_URL ||
-    process.env.OLLAMA_BASE_URL ||
-    "http://ollama:11434";
-
-  try {
-    const input = text.substring(0, 2000);
-    const request = async (endpoint: string, body: any) => {
-      const response = await fetch(`${ollamaUrl}${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      return response;
-    };
-
-    let response = await request("/api/embed", { model, input });
-    if (response.status === 404) {
-      response = await request("/api/embeddings", { model, prompt: input });
-    }
-    if (response.status === 404) {
-      // On first boot the embedding model may still be pulling; retry once.
-      await new Promise((r) => setTimeout(r, 2000));
-      response = await request("/api/embed", { model, input });
-      if (response.status === 404) {
-        response = await request("/api/embeddings", { model, prompt: input });
-      }
-    }
-
-    if (!response.ok) {
-      console.error(
-        `[RAG] Embedding request failed (${response.status} ${response.statusText})`
-      );
-      return fallbackEmbedding(text, dimensionsHint);
-    }
-
-    const payload: any = await response.json();
-    if (Array.isArray(payload?.embedding)) {
-      return payload.embedding as number[];
-    }
-    if (Array.isArray(payload?.embeddings) && Array.isArray(payload.embeddings[0])) {
-      return payload.embeddings[0] as number[];
-    }
-
-    console.error("[RAG] Unexpected embedding response format");
-    return fallbackEmbedding(text, dimensionsHint);
-  } catch (error) {
-    console.error("[RAG] Failed to generate embedding:", error);
-    return fallbackEmbedding(text, dimensionsHint);
+): Promise<number[] | null> {
+  const result = await generateEmbeddingVector(text, {
+    model: config.retrieval.embeddingModel,
+    maxChars: 4000,
+    retries: 1,
+  });
+  if (!result.embedding) {
+    console.error(`[RAG] Embedding failed: ${result.error || "unknown"}`);
+    return null;
   }
-}
-
-function fallbackEmbedding(text: string, dimensionsHint?: number): number[] {
-  const dimension = dimensionsHint && dimensionsHint > 0 ? dimensionsHint : 384;
-  const vector = new Array(dimension).fill(0);
-
-  for (let i = 0; i < text.length; i += 1) {
-    const charCode = text.charCodeAt(i);
-    vector[i % dimension] += charCode / 256;
-  }
-
-  return normalizeVector(vector);
+  // dimensionsHint kept for API compat; Ollama model defines size.
+  void dimensionsHint;
+  return result.embedding;
 }
 
 function computeBm25Score(
@@ -333,7 +283,9 @@ async function fetchRawChunks(
     .from(documentChunks)
     .innerJoin(documents, eq(documentChunks.documentId, documents.id))
     .where(eq(documents.status, "indexed"))
-    .limit(config.retrieval.maxInitialChunks);
+    // Prefer newer chunks; avoid arbitrary slice of unordered corpus
+    .orderBy(desc(documentChunks.id))
+    .limit(Math.max(config.retrieval.maxInitialChunks, 500));
 
   const faqRows = await db
     .select({
@@ -405,8 +357,7 @@ async function fetchRawChunks(
 
 function prepareRetrieverChunks(
   rows: Awaited<ReturnType<typeof fetchRawChunks>>["chunks"],
-  stopwords: Set<string>,
-  fallbackDimensions: number
+  stopwords: Set<string>
 ): {
   chunkStats: RetrieverChunk[];
   docFrequency: Map<string, number>;
@@ -439,7 +390,16 @@ function prepareRetrieverChunks(
       }
     }
 
-    const termFrequency = buildTermFrequency(row.content, stopwords);
+    // Prefer precomputed lexical terms when available (avoids re-tokenizing)
+    let termFrequency: Map<string, number>;
+    if (typeof row.bm25Terms === "string" && row.bm25Terms.trim().length > 0) {
+      termFrequency = new Map();
+      for (const term of row.bm25Terms.split(/\s+/).filter(Boolean)) {
+        termFrequency.set(term, (termFrequency.get(term) ?? 0) + 1);
+      }
+    } else {
+      termFrequency = buildTermFrequency(row.content, stopwords);
+    }
 
     termFrequency.forEach((_, term) => {
       docFrequency.set(term, (docFrequency.get(term) ?? 0) + 1);
@@ -813,17 +773,16 @@ async function retrieveAndScoreChunks(
   }
 
   const queryEmbedding = await generateEmbedding(query, config);
-  const fallbackDimensions = queryEmbedding.length || 384;
 
   const { chunkStats, docFrequency, avgDocLength } = prepareRetrieverChunks(
     rawChunks,
-    stopwords,
-    fallbackDimensions
+    stopwords
   );
 
   const matchesByDoc = await computeProductBoosts(skuTokens);
 
-  const chunksWithScores: ScoredChunk[] = chunkStats.map((chunk) => {
+  const rawBm25Scores: number[] = [];
+  const scoredBase = chunkStats.map((chunk) => {
     const bm25 = computeBm25Score(
       queryTokens,
       chunk.termFrequency,
@@ -832,12 +791,18 @@ async function retrieveAndScoreChunks(
       docFrequency,
       chunkStats.length
     );
+    rawBm25Scores.push(bm25);
+    return { chunk, bm25 };
+  });
 
-    const embeddingVector =
-      chunk.embeddingVector ??
-      fallbackEmbedding(chunk.content, fallbackDimensions);
+  const maxBm25 = Math.max(...rawBm25Scores, 0.0001);
 
-    const embeddingScore = cosineSimilarity(queryEmbedding, embeddingVector);
+  const chunksWithScores: ScoredChunk[] = scoredBase.map(({ chunk, bm25 }) => {
+    const embeddingVector = chunk.embeddingVector;
+    const embeddingScore =
+      queryEmbedding && embeddingVector
+        ? cosineSimilarity(queryEmbedding, embeddingVector)
+        : 0;
 
     const docInfo =
       documentMeta.get(chunk.documentId) ??
@@ -860,16 +825,23 @@ async function retrieveAndScoreChunks(
       intents
     );
 
+    // Cap boosts so they cannot fully dominate similarity
+    const cappedBoost = Math.max(-0.5, Math.min(totalBoost, 0.85));
+    const bm25Norm = bm25 / maxBm25;
+
     const weights = config.retrieval.hybridWeights;
-    const hybrid =
-      weights.embedding * embeddingScore + weights.bm25 * bm25 + totalBoost;
+    // If no query embedding, lean on BM25 more
+    const embW = queryEmbedding ? weights.embedding : 0.15;
+    const bm25W = queryEmbedding ? weights.bm25 : 0.85;
+    const hybrid = embW * embeddingScore + bm25W * bm25Norm + cappedBoost;
 
     return {
       ...chunk,
-      embeddingVector,
-      bm25Score: bm25,
+      // Never invent fake embeddings for scoring — BM25 covers missing vectors
+      embeddingVector: embeddingVector ?? null,
+      bm25Score: bm25Norm,
       embeddingScore,
-      boostedScore: totalBoost,
+      boostedScore: cappedBoost,
       hybridScore: hybrid,
       relevance: hybrid,
       boostsApplied: reasons,
@@ -880,17 +852,18 @@ async function retrieveAndScoreChunks(
   const hasVariantPreference = chunksWithScores.some((chunk) =>
     chunk.boostsApplied.includes("variant_match")
   );
-  if (hasVariantPreference) {
-    const variantOnly = chunksWithScores.filter((chunk) =>
-      chunk.boostsApplied.includes("variant_match")
-    );
-    if (variantOnly.length > 0) {
-      candidateChunks = variantOnly;
-    }
-  }
 
+  // Soft preference: variant boost already in score; keep variant chunks ahead on ties,
+  // but do NOT hard-filter. Final sort must preserve this (not wipe with pure relevance).
   const sorted = [...candidateChunks]
-    .sort((a, b) => b.relevance - a.relevance)
+    .sort((a, b) => {
+      if (hasVariantPreference) {
+        const aVar = a.boostsApplied.includes("variant_match") ? 1 : 0;
+        const bVar = b.boostsApplied.includes("variant_match") ? 1 : 0;
+        if (aVar !== bVar) return bVar - aVar;
+      }
+      return b.relevance - a.relevance;
+    })
     .slice(
       0,
       options?.topK ?? config.retrieval.mmr.candidatePoolSize
@@ -2849,7 +2822,8 @@ function buildUserMessage(
 ЗАПРЕЩЕНО обрывать ответ на середине предложения или списка.`;
   }
 
-  return `Задача: ответить на вопрос пользователя только на основе источников ниже. Если сведений нет — так и скажи. 
+  return `Задача: ответить на вопрос пользователя только на основе источников ниже.
+Пиши «нет информации» ТОЛЬКО если источники ниже не содержат данных по теме. Если источники есть и относятся к вопросу — используй их полностью, отказ запрещён.
 
 КРИТИЧЕСКИ ВАЖНО — ЯЗЫК ОТВЕТА:
 ОБЯЗАТЕЛЬНО отвечай ТОЛЬКО на русском языке. Использование английского, немецкого или любого другого языка СТРОГО ЗАПРЕЩЕНО. Все ответы, характеристики, описания должны быть строго на русском языке.
@@ -3124,16 +3098,8 @@ export async function processRAGQuery(
     }
   });
 
+  // Soft variant: prefer via boosts/sort in retrieveRelevantChunks; do not hard-filter
   let baseChunks = typeFiltered.length > 0 ? typeFiltered : filtered;
-  if (variantFilterKeys.size > 0) {
-    const variantOnly = baseChunks.filter((chunk) => {
-      const key = getVariantKeyFromChunk(chunk);
-      return key && variantFilterKeys.has(key);
-    });
-    if (variantOnly.length > 0) {
-      baseChunks = variantOnly;
-    }
-  }
   const augmentedChunks = await expandCatalogChunksWithNeighbors(
     baseChunks,
     retrieval.documentMeta
@@ -3517,7 +3483,8 @@ export async function processRAGQuery(
   const wantsTables = queryWantsTables(ragQuery.query);
   const userMessage =
     specialDoc
-      ? `Задача: ответить на вопрос пользователя строго на основе источников ниже. Если сведений нет — так и скажи.
+      ? `Задача: ответить на вопрос пользователя строго на основе источников ниже.
+Пиши «нет информации» ТОЛЬКО если источники ниже не содержат данных по теме.
 
 ВАЖНО:
 - Отвечай кратко и по делу.
@@ -3597,7 +3564,7 @@ ${context.context}
       ?.finish_reason ?? ""
   ).toLowerCase();
   const looksEmptyRefusal =
-    /нет информации о\s*(вашем\s*)?вопрос|нет сведений|не найден[аоы]?\s+информац/i.test(
+    /нет информации о\s*(вашем\s*)?вопрос|нет сведений|не найден[аоы]?\s+информац|информаци[яи]\s+отсутству|не удалось найти|в (предоставленных )?источниках нет|не располагаю (данными|информацией)/i.test(
       messageContent
     );
   const looksTruncated =

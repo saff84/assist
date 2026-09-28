@@ -16,7 +16,7 @@
     "relevanceThreshold": 0.45,
     "answerThreshold": 0.52,
     "fallbackThreshold": 0.35,
-    "maxInitialChunks": 300,
+    "maxInitialChunks": 2000,
     "mmr": {
       "lambda": 0.7,
       "candidatePoolSize": 40,

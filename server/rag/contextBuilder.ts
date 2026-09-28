@@ -45,6 +45,14 @@ export function buildContext(
       if (availableTokens <= 0) {
         return;
       }
+      // Prefer dropping the whole chunk over cutting a markdown table mid-row
+      const looksLikeTable =
+        truncatedContent.includes("| ---") ||
+        truncatedContent.includes("|---") ||
+        truncatedContent.includes("[Таблица");
+      if (looksLikeTable && estimateTokens(truncatedContent) > availableTokens) {
+        return;
+      }
       const permittedChars = Math.max(availableTokens * TOKEN_CHAR_RATIO, 1);
       truncatedContent = truncateContent(truncatedContent, permittedChars);
       blockTokens =

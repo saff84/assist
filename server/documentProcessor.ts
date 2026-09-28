@@ -795,31 +795,8 @@ function createStructuredSectionChunks(
     const sectionElements = elementsBySection.get(section.sectionPath) || [];
     const sectionProductTag = buildProductTag(section.title);
     
-    // Гарантируем чанк даже для пустых секций (только с заголовком)
+    // Пустые секции без контента не создаём — они засоряют поиск
     if (sectionElements.length === 0) {
-      // Создаем минимальный чанк с заголовком
-      const sectionHeader = `${section.sectionPath}. ${section.title}`;
-      const fallbackContent = `${sectionHeader}\n\nРаздел без детализированных данных в документе.`;
-      
-      chunks.push({
-        content: fallbackContent,
-        tokenCount: estimateTokenCount(fallbackContent),
-        chunkIndex: chunkIndex++,
-        sectionPath: section.sectionPath,
-        elementType: "text",
-        language: DEFAULT_LANGUAGE,
-        metadata: {
-          category: "description",
-          section: section.title,
-          pageRange: section.pageStart
-            ? section.pageEnd && section.pageEnd !== section.pageStart
-              ? `${section.pageStart}-${section.pageEnd}`
-              : `${section.pageStart}`
-            : "",
-          tags: [section.sectionPath, "SANEXT"],
-          importance: "medium",
-        },
-      });
       continue;
     }
 
@@ -924,11 +901,12 @@ function createStructuredSectionChunks(
     }
 
     const content = contentParts.join("\n\n").trim();
-    
-    // Гарантируем минимальный контент даже для коротких секций
-    const finalContent = content.length < sectionHeader.length + 10
-      ? `${sectionHeader}\n\nРаздел содержит только заголовок.`
-      : content;
+
+    // Не создаём stub-чанки «только заголовок» — они засоряют BM25/embedding поиск
+    if (content.length < sectionHeader.length + 10) {
+      continue;
+    }
+    const finalContent = content;
 
     // Определение типа элемента
     let elementType: "text" | "table" | "mixed" = "text";

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, type CSSProperties } from "react";
 import { Loader2, Send, X, MessageCircle, RotateCcw } from "lucide-react";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
-import { WidgetApiClient, type WidgetAttachment } from "@/widget/api";
+import { WidgetApiClient, type WidgetAttachment, type WidgetSource } from "@/widget/api";
 import "@/widget/widget.css";
 
 interface Message {
@@ -9,6 +9,7 @@ interface Message {
   type: "user" | "assistant";
   content: string;
   attachments?: WidgetAttachment[];
+  sources?: WidgetSource[];
 }
 
 type ChatTopic = "products" | "instructions" | "certificates" | "passports" | "warranty";
@@ -109,7 +110,11 @@ export function WebChatWidget({
     []
   );
 
-  const appendAssistantMessage = (content: string, attachments: WidgetAttachment[] = []) => {
+  const appendAssistantMessage = (
+    content: string,
+    attachments: WidgetAttachment[] = [],
+    sources: WidgetSource[] = []
+  ) => {
     setProcessingStage("type");
     setTimeout(() => setProcessingStage("idle"), 400);
     setMessages((prev) => [
@@ -119,6 +124,7 @@ export function WebChatWidget({
         type: "assistant",
         content,
         attachments,
+        sources,
       },
     ]);
   };
@@ -155,7 +161,11 @@ export function WebChatWidget({
         sessionId,
         forceDocumentType,
       });
-      appendAssistantMessage(response.response, response.attachments ?? []);
+      appendAssistantMessage(
+        response.response,
+        response.attachments ?? [],
+        response.sources ?? []
+      );
     } catch (error) {
       setProcessingStage("idle");
       console.error("[SANEXT Widget] chat failed:", error);
@@ -382,6 +392,11 @@ export function WebChatWidget({
                       <MessageAttachments attachments={msg.attachments} />
                     </div>
                   )}
+                  {msg.type === "assistant" && msg.sources && msg.sources.length > 0 && (
+                    <div className="mt-2">
+                      <MessageSources sources={msg.sources} />
+                    </div>
+                  )}
                 </div>
               </div>
             ))
@@ -413,6 +428,31 @@ export function WebChatWidget({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function MessageSources({ sources }: { sources: WidgetSource[] }) {
+  const unique = new Map<string, WidgetSource>();
+  for (const s of sources) {
+    const key = `${s.documentId}:${s.filename}`;
+    if (!unique.has(key)) unique.set(key, s);
+  }
+  const list = Array.from(unique.values()).slice(0, 5);
+  if (!list.length) return null;
+
+  return (
+    <div className="sanext-widget-sources">
+      <div className="sanext-widget-sources-label">Источники</div>
+      <ul>
+        {list.map((s) => (
+          <li key={`${s.documentId}-${s.chunkIndex}`}>
+            {s.filename}
+            {s.pageNumber ? `, стр. ${s.pageNumber}` : ""}
+            {s.sectionPath ? ` · ${s.sectionPath}` : ""}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

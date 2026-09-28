@@ -330,9 +330,9 @@ export const documentRouter = router({
           sessionId: input.sessionId,
           userId: ctx.user?.id,
           source: input.source,
-          topK: 5,
+          topK: 12,
         }, {
-          topK: 5,
+          topK: 12,
           includeDiagnostics: input.source === "test",
           forceDocumentType: input.forceDocumentType,
         });
