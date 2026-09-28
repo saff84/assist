@@ -4,7 +4,7 @@
     "temperature": 0,
     "topP": 0.1,
     "repeatPenalty": 1.1,
-    "maxTokens": 1024,
+    "maxTokens": 4096,
     "language": "ru"
   },
   "retrieval": {
@@ -45,14 +45,13 @@
       "model": "bge-reranker-v2-m3"
     },
     "contextCaps": {
-      "maxChunks": 12,
-      "maxChunksPerDoc": 8,
-      "maxTokens": 6000,
-      "chunkTokenLimit": 900
+      "maxChunks": 16,
+      "maxChunksPerDoc": 12,
+      "maxTokens": 9000,
+      "chunkTokenLimit": 1400
     }
   },
   "logging": {
     "enabled": true
   }
 }
-

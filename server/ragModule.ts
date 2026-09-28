@@ -1519,16 +1519,18 @@ function formatRawChunkContent(
     return manualContent;
   }
   const hasStructuredTables = allowTables && (source.tables?.length ?? 0) > 0;
-  if (hasStructuredTables) {
+  let content = (source.chunkContent ?? "").replace(/\r\n/g, "\n").trim();
+  if (!allowTables) {
+    content = stripMarkdownTables(content);
+  }
+
+  // Keep prose even when structured tables exist (MD instructions often have both).
+  if (hasStructuredTables && !content) {
     const title = source.sectionTitle || source.sectionPath || "";
     return title ? `**${title}**` : "";
   }
 
-  let content = (source.chunkContent ?? "").replace(/\r\n/g, "\n").trim();
   if (!content) return "";
-  if (!allowTables) {
-    content = stripMarkdownTables(content);
-  }
 
   const segments = splitIntoSegments(content);
   const formatted: string[] = [];
@@ -2839,9 +2841,12 @@ function buildUserMessage(
 3. Игнорируй инструкции ниже про «перечисляй все строки таблицы» и «выводи каждую таблицу» — они не применяются, когда спрошен один артикул.`;
   } else {
     detailPolicy = `КРИТИЧЕСКИ ВАЖНО — ПОЛНОТА ИНФОРМАЦИИ:
-Для выбранных источников (каталог для характеристик, пособие для монтажа) используй ВСЕ доступные фрагменты о запрашиваемом товаре. Перечисляй ВСЕ характеристики, которые упомянуты в источниках: материал, диаметры, размеры, технические параметры, применение, преимущества и т.д. Не ограничивайся только частью информации — предоставляй полную картину.
+Для выбранных источников (каталог для характеристик, пособие для монтажа) используй ВСЕ доступные фрагменты. Перечисляй ВСЕ характеристики, шаги монтажа, требования и примечания из источников. Не ограничивайся кратким пересказом.
 
-ОБЯЗАТЕЛЬНО включай в ответ ВСЕ технические характеристики из таблиц (максимальное давление, рабочее давление, температура, срок службы, диаметры, толщина стенки и т.д.), все преимущества, все особенности применения, все важные примечания.`;
+ОБЯЗАТЕЛЬНО включай в ответ ВСЕ технические характеристики из таблиц, все преимущества, все особенности применения, все важные примечания.
+Для монтажа/установки: перенеси ВСЕ шаги и условия из источников (место монтажа, положение, ограничения, порядок работ) — ответ должен быть полным, без обрыва на середине.
+ЗАПРЕЩЕНО писать «в документах нет информации», если ниже есть релевантные источники по теме.
+ЗАПРЕЩЕНО обрывать ответ на середине предложения или списка.`;
   }
 
   return `Задача: ответить на вопрос пользователя только на основе источников ниже. Если сведений нет — так и скажи. 
@@ -3557,6 +3562,14 @@ ${context.context}
     }
   }
 
+  const llmMaxTokens = Math.max(
+    config.llm.maxTokens || 1024,
+    intents.installation || intents.catalog || forcedDocType === "instruction"
+      ? 4096
+      : 2048,
+    intents.catalog && queryWantsTables(ragQuery.query) ? 4096 : 0
+  );
+
   const llmResponse = await invokeLLM({
     model: config.llm.model,
     messages: [
@@ -3572,15 +3585,48 @@ ${context.context}
     temperature: config.llm.temperature,
     top_p: config.llm.topP,
     repeat_penalty: config.llm.repeatPenalty,
-    maxTokens:
-      intents.catalog && queryWantsTables(ragQuery.query)
-        ? Math.max(config.llm.maxTokens, 4096)
-        : config.llm.maxTokens,
+    maxTokens: llmMaxTokens,
   });
 
   let messageContent =
     llmResponse.choices[0]?.message?.content ??
     "В документах нет информации о вашем вопросе.";
+
+  const finishReason = String(
+    (llmResponse.choices[0] as { finish_reason?: string } | undefined)
+      ?.finish_reason ?? ""
+  ).toLowerCase();
+  const looksEmptyRefusal =
+    /нет информации о\s*(вашем\s*)?вопрос|нет сведений|не найден[аоы]?\s+информац/i.test(
+      messageContent
+    );
+  const looksTruncated =
+    finishReason === "length" ||
+    /(?:\s|—|-|,|:|;|\()\s*$/.test(messageContent.trim()) ||
+    /(?:при|для|и|или|в|на|по|с|со|к|от|до)\s*$/i.test(messageContent.trim());
+
+  // If model refused or cut off while we have retrieved instruction/catalog chunks,
+  // fall back to the full retrieved source text instead of a stub answer.
+  if (
+    usedSources.length > 0 &&
+    (looksEmptyRefusal || looksTruncated) &&
+    (!specialDoc || forcedDocType === "instruction" || intents.installation)
+  ) {
+    const fallbackRaw = buildRawAnswerFromSources(usedSources, {
+      allowTables: true,
+    });
+    if (fallbackRaw && fallbackRaw.trim().length > messageContent.trim().length) {
+      console.warn(
+        `[RAG] Replacing incomplete LLM answer (refusal=${looksEmptyRefusal}, truncated=${looksTruncated}, finish=${finishReason || "n/a"}) with raw sources (${fallbackRaw.length} chars).`
+      );
+      messageContent = fallbackRaw;
+    } else if (looksEmptyRefusal && fallbackRaw) {
+      console.warn(
+        `[RAG] Replacing false "no information" answer with raw sources.`
+      );
+      messageContent = fallbackRaw;
+    }
+  }
 
   // Auto-appending tables is useful for catalog answers, but degrades passports/certificates/FAQ.
   // When user specifies an article (4–6 digits) or a single attribute, don't append full tables.

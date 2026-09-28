@@ -9,7 +9,7 @@ const DEFAULT_CONFIG: RAGConfig = {
     temperature: 0,
     topP: 0.1,
     repeatPenalty: 1.1,
-    maxTokens: 2048,
+    maxTokens: 4096,
     language: "ru",
   },
   retrieval: {
@@ -47,10 +47,10 @@ const DEFAULT_CONFIG: RAGConfig = {
       model: "bge-reranker-v2-m3",
     },
     contextCaps: {
-      maxChunks: 20,
-      maxChunksPerDoc: 15,
-      maxTokens: 10000,
-      chunkTokenLimit: 1500,
+      maxChunks: 16,
+      maxChunksPerDoc: 12,
+      maxTokens: 9000,
+      chunkTokenLimit: 1400,
     },
   },
   logging: {
