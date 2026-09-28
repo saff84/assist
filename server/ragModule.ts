@@ -2757,24 +2757,91 @@ function formatTableHeading(
   return parts.join(" — ");
 }
 
+function normalizeTableFingerprint(markdown: string): string {
+  return markdown
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/\|\s*-+\s*/g, "|")
+    .replace(/\|/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function responseAlreadyHasTable(
+  response: string,
+  tableMarkdown: string
+): boolean {
+  const needle = normalizeTableFingerprint(tableMarkdown);
+  if (!needle || needle.length < 24) {
+    return response.includes(tableMarkdown.trim());
+  }
+  const hay = normalizeTableFingerprint(response);
+  if (hay.includes(needle)) return true;
+
+  // Header-row overlap: if most header cells already appear as a markdown table row
+  const headerLine = tableMarkdown
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.startsWith("|") && !/^\|\s*-+/.test(l));
+  if (!headerLine) return false;
+  const headerCells = headerLine
+    .split("|")
+    .map((c) => c.trim().toLowerCase().replace(/ё/g, "е"))
+    .filter(Boolean);
+  if (headerCells.length < 2) return false;
+  const responseLower = response.toLowerCase().replace(/ё/g, "е");
+  const headerHits = headerCells.filter((c) => c.length >= 3 && responseLower.includes(c)).length;
+  if (headerHits < Math.ceil(headerCells.length * 0.75)) return false;
+
+  // And at least two body cells from first data row
+  const bodyLine = tableMarkdown
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith("|") && !/^\|\s*-+/.test(l))[1];
+  if (!bodyLine) return true;
+  const bodyCells = bodyLine
+    .split("|")
+    .map((c) => c.trim().toLowerCase().replace(/ё/g, "е"))
+    .filter((c) => c.length >= 3);
+  const bodyHits = bodyCells.filter((c) => responseLower.includes(c)).length;
+  return bodyHits >= Math.min(2, bodyCells.length);
+}
+
 function ensureTablesInResponse(
   response: string,
-  sources: ContextSourceEntry[]
+  sources: ContextSourceEntry[],
+  options?: { skipIfResponseHasTables?: boolean }
 ): string {
   if (!response) {
     response = "";
   }
+
+  // Installation/LLM answers often already include the needed tables —
+  // appending again causes near-duplicate blocks after «Источники».
+  if (
+    options?.skipIfResponseHasTables &&
+    (response.match(/\|.+\|/g) ?? []).length >= 2
+  ) {
+    return response;
+  }
+
   const additions: string[] = [];
+  const seenFingerprints = new Set<string>();
+
   sources.forEach((source) => {
     source.tables?.forEach((table, index) => {
       if (!table.markdown) {
         return;
       }
-      // Do not skip by header-only match: model may output a truncated table
-      // with correct header but missing tail rows.
-      if (response.includes(table.markdown.trim())) {
+      const fp = normalizeTableFingerprint(table.markdown);
+      if (seenFingerprints.has(fp)) {
         return;
       }
+      if (responseAlreadyHasTable(response, table.markdown)) {
+        seenFingerprints.add(fp);
+        return;
+      }
+      seenFingerprints.add(fp);
       const heading = formatTableHeading(source, table, index);
       additions.push(
         `${heading ? `**${heading}**\n` : ""}${table.markdown}`.trim()
@@ -2968,11 +3035,11 @@ function buildUserMessage(
 2. НЕ выводи таблицу со всеми артикулами. Покажи только строку/данные для указанного артикула.
 3. Игнорируй инструкции ниже про «перечисляй все строки таблицы» и «выводи каждую таблицу» — они не применяются, когда спрошен один артикул.`;
   } else {
-    detailPolicy = `КРИТИЧЕСКИ ВАЖНО — ПОЛНОТА ИНФОРМАЦИИ:
-Для выбранных источников (каталог для характеристик, пособие для монтажа) используй ВСЕ доступные фрагменты. Перечисляй ВСЕ характеристики, шаги монтажа, требования и примечания из источников. Не ограничивайся кратким пересказом.
-
-ОБЯЗАТЕЛЬНО включай в ответ ВСЕ технические характеристики из таблиц, все преимущества, все особенности применения, все важные примечания.
-Для монтажа/установки: перенеси ВСЕ шаги и условия из источников (место монтажа, положение, ограничения, порядок работ) — ответ должен быть полным, без обрыва на середине.
+    detailPolicy = `КРИТИЧЕСКИ ВАЖНО — ПОЛНОТА БЕЗ ДУБЛЕЙ:
+Для выбранных источников используй все шаги/требования по теме. Перечисляй характеристики, шаги монтажа и примечания.
+Если одна и та же таблица/правило есть в нескольких источниках — выведи её ОДИН раз.
+Второй документ используй только для дополнений, которых нет в первом.
+НЕ дописывай после ответа повторные таблицы и чужую номенклатуру, если пользователь не просил полный каталог/таблицу моделей.
 ЗАПРЕЩЕНО писать «в документах нет информации», если ниже есть релевантные источники по теме.
 ЗАПРЕЩЕНО обрывать ответ на середине предложения или списка.`;
   }
@@ -3766,7 +3833,12 @@ ${context.context}
   const allowAutoTables =
     (!specialDoc || wantsTables) && !requestedCatalogAttribute && !explicitArticle;
   if (allowAutoTables) {
-    messageContent = ensureTablesInResponse(messageContent, usedSources);
+    messageContent = ensureTablesInResponse(messageContent, usedSources, {
+      // For mounting answers the model usually already rendered tables;
+      // skip append to avoid duplicate sensor/nomenclature blocks.
+      skipIfResponseHasTables:
+        intents.installation || forcedDocType === "instruction",
+    });
   }
   messageContent = normalizeAnswerSpacing(messageContent);
 
