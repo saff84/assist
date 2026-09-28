@@ -1639,6 +1639,72 @@ function mapSourcesForResponse(
   return { sources: mappedSources, chunks: mappedChunks };
 }
 
+async function buildAttachmentsForSources(
+  entries: ContextSourceEntry[],
+  documentMeta: Map<number, DocumentMeta>
+): Promise<NonNullable<RAGResponse["attachments"]>> {
+  const seen = new Set<number>();
+  const attachments: NonNullable<RAGResponse["attachments"]> = [];
+
+  for (const entry of entries) {
+    if (seen.has(entry.documentId)) continue;
+    seen.add(entry.documentId);
+
+    let downloadFilename: string | null =
+      ((documentMeta.get(entry.documentId) as any)?.downloadFilename as
+        | string
+        | null
+        | undefined) ?? null;
+    let title =
+      documentMeta.get(entry.documentId)?.title ?? null;
+    let fileType = "pdf";
+    let docType = (entry.documentType ??
+      documentMeta.get(entry.documentId)?.docType ??
+      "general") as DocumentType;
+    let filename = entry.filename;
+
+    try {
+      const doc = await documentDb.getDocumentById(entry.documentId);
+      if (doc) {
+        downloadFilename =
+          (typeof (doc as any).downloadFilename === "string" &&
+            (doc as any).downloadFilename) ||
+          downloadFilename;
+        title = doc.title ?? title;
+        fileType = doc.fileType || fileType;
+        docType = (doc.docType as DocumentType) || docType;
+        filename = doc.filename || filename;
+      }
+    } catch {
+      // keep meta fallbacks
+    }
+
+    // Prefer companion PDF for download when present (MD knowledge + PDF file).
+    // Also attach instruction PDFs themselves for download.
+    const shouldAttach =
+      Boolean(downloadFilename) ||
+      docType === "instruction" ||
+      docType === "certificate" ||
+      docType === "passport";
+
+    if (!shouldAttach) continue;
+
+    attachments.push(
+      buildDocumentAttachment({
+        id: entry.documentId,
+        filename,
+        title,
+        fileType,
+        docType,
+        chunksCount: 1,
+        downloadFilename,
+      })
+    );
+  }
+
+  return attachments;
+}
+
 function splitIntoSegments(content: string): string[] {
   return content.split(/\n\s*\n/g);
 }
@@ -3323,6 +3389,7 @@ export async function processRAGQuery(
     isLikelyProductOnlyQuery(ragQuery.query);
 
   const { sources, chunks } = mapSourcesForResponse(usedSources);
+  const attachments = await buildAttachmentsForSources(usedSources, retrieval.documentMeta);
 
   if (quickResponsesEnabled && catalogBlockIntent && confidentSource) {
     const block = extractCatalogBlockByIntent(confidentSource, catalogBlockIntent);
@@ -3332,6 +3399,7 @@ export async function processRAGQuery(
         response: block,
         sources: mapped.sources,
         chunks: mapped.chunks,
+        attachments,
         responseTime: Date.now() - start,
         tokensUsed:
           Math.ceil(ragQuery.query.length / TOKEN_CHAR_RATIO) +
@@ -3350,6 +3418,7 @@ export async function processRAGQuery(
         response: rawAnswer,
         sources: mapped.sources,
         chunks: mapped.chunks,
+        attachments,
         responseTime: Date.now() - start,
         tokensUsed:
           Math.ceil(ragQuery.query.length / TOKEN_CHAR_RATIO) +
@@ -3374,6 +3443,7 @@ export async function processRAGQuery(
         response: rawAnswer,
         sources: rawMapped.sources,
         chunks: rawMapped.chunks,
+        attachments,
         responseTime: Date.now() - start,
         tokensUsed:
           Math.ceil(ragQuery.query.length / TOKEN_CHAR_RATIO) +
@@ -3407,6 +3477,7 @@ export async function processRAGQuery(
           response: normalizeAnswerSpacing(extracted),
           sources: mapped.sources,
           chunks: mapped.chunks,
+          attachments,
           responseTime: Date.now() - start,
           tokensUsed:
             Math.ceil(ragQuery.query.length / TOKEN_CHAR_RATIO) +
@@ -3422,6 +3493,7 @@ export async function processRAGQuery(
         response: rawAnswer,
         sources: mapped.sources,
         chunks: mapped.chunks,
+        attachments,
         responseTime: Date.now() - start,
         tokensUsed:
           Math.ceil(ragQuery.query.length / TOKEN_CHAR_RATIO) +
@@ -3555,6 +3627,7 @@ ${context.context}
     response: messageContent,
     sources,
     chunks,
+    attachments,
     responseTime: Date.now() - start,
     tokensUsed:
       Math.ceil(ragQuery.query.length / TOKEN_CHAR_RATIO) +

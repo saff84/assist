@@ -11,6 +11,7 @@ import {
   DocumentSection,
   ElementType,
 } from "./structuredParser";
+import { parseMarkdownDocument } from "./markdownParser";
 
 /**
  * Детерминированный обработчик документов для русскоязычных документов SANEXT
@@ -19,7 +20,7 @@ import {
 
 export interface ProcessedDocument {
   filename: string;
-  fileType: "pdf" | "docx" | "xlsx";
+  fileType: "pdf" | "docx" | "xlsx" | "md";
   processingType:
     | "catalog"
     | "instruction"
@@ -1320,13 +1321,15 @@ export async function processDocument(
 ): Promise<ProcessedDocument> {
   try {
   const filename = path.basename(filePath);
-    const ext = path.extname(filename).toLowerCase().substring(1) as
+    const extRaw = path.extname(filename).toLowerCase().substring(1);
+    const ext = (extRaw === "markdown" ? "md" : extRaw) as
       | "pdf"
       | "docx"
-      | "xlsx";
+      | "xlsx"
+      | "md";
 
-    if (ext !== "pdf" && ext !== "docx" && ext !== "xlsx") {
-      throw new Error(`Unsupported file format: ${ext}`);
+    if (ext !== "pdf" && ext !== "docx" && ext !== "xlsx" && ext !== "md") {
+      throw new Error(`Unsupported file format: ${extRaw}`);
     }
 
     console.log(`[DocumentProcessor] Начало обработки: ${filename}, тип: ${processingType}, формат: ${ext}`);
@@ -1343,6 +1346,9 @@ export async function processDocument(
       break;
         case "docx":
       structured = await parseDocxDocument(filePath);
+      break;
+        case "md":
+      structured = await parseMarkdownDocument(filePath);
       break;
     default:
       throw new Error(`Unsupported file format: ${ext}`);
@@ -1548,7 +1554,7 @@ export function validateFile(
   maxSizeBytes: number = 100 * 1024 * 1024 // 100MB default
 ): { valid: boolean; error?: string } {
   const ext = path.extname(filename).toLowerCase();
-  const supportedFormats = [".pdf", ".xlsx", ".docx"];
+  const supportedFormats = [".pdf", ".xlsx", ".docx", ".md", ".markdown"];
 
   if (!supportedFormats.includes(ext)) {
     return {

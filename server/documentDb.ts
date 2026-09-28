@@ -279,6 +279,22 @@ export async function updateDocumentTitle(documentId: number, title: string | nu
     .where(eq(documents.id, documentId));
 }
 
+export async function updateDocumentDownloadFilename(
+  documentId: number,
+  downloadFilename: string | null
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db
+    .update(documents)
+    .set({
+      downloadFilename: downloadFilename ?? null,
+      updatedAt: new Date(),
+    } as any)
+    .where(eq(documents.id, documentId));
+}
+
 export async function getDocTypeAvailability(
   docTypes: DocumentType[]
 ): Promise<Record<DocumentType, boolean>> {

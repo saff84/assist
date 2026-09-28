@@ -30,10 +30,12 @@ export default function DocumentsPage() {
   const [processingType, setProcessingType] = useState<ProcessingType>("general");
   const [productTitle, setProductTitle] = useState("");
   const [productSku, setProductSku] = useState("");
+  const [companionPdf, setCompanionPdf] = useState<File | null>(null);
   const [shouldPoll, setShouldPoll] = useState(false);
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<string>("all");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const companionInputRef = useRef<HTMLInputElement>(null);
   const [, setLocation] = useLocation();
 
   // Fetch documents
@@ -120,7 +122,7 @@ export default function DocumentsPage() {
     const files = e.currentTarget.files;
     if (!files || files.length === 0) return;
 
-    const supportedFormats = [".pdf", ".xlsx", ".xls", ".docx"];
+    const supportedFormats = [".pdf", ".xlsx", ".xls", ".docx", ".md", ".markdown"];
     const selected = Array.from(files);
 
     if (processingType === "catalog_single") {
@@ -189,13 +191,15 @@ export default function DocumentsPage() {
       return;
     }
 
-    await uploadFile(file, processingType);
+    await uploadFile(file, processingType, {
+      companionPdf: companionPdf ?? undefined,
+    });
   };
 
   const uploadFile = async (
     file: File,
     type: ProcessingType,
-    opts?: { title?: string; sku?: string; redirect?: boolean }
+    opts?: { title?: string; sku?: string; redirect?: boolean; companionPdf?: File }
   ): Promise<number | null> => {
     const shouldRedirect = opts?.redirect !== false;
     if (opts?.redirect !== false) {
@@ -206,6 +210,9 @@ export default function DocumentsPage() {
     try {
       const formData = new FormData();
       formData.append("file", file);
+      if (opts?.companionPdf) {
+        formData.append("companionPdf", opts.companionPdf);
+      }
       const skipFullProcessing =
         type === "manual" ||
         type === "certificate" ||
@@ -239,6 +246,8 @@ export default function DocumentsPage() {
       toast.success(result.message || "Document uploaded successfully");
       if (shouldRedirect) {
         setIsUploadDialogOpen(false);
+        setCompanionPdf(null);
+        if (companionInputRef.current) companionInputRef.current.value = "";
       }
       
       // Reset file input
@@ -679,16 +688,35 @@ export default function DocumentsPage() {
                 <p className="font-medium">
                   {processingType === "catalog_single" ? "Выбрать файл(ы)" : "Выбрать файл"}
                 </p>
-                <p className="text-xs text-muted-foreground">PDF / Excel / Word • до 100MB</p>
+                <p className="text-xs text-muted-foreground">PDF / Excel / Word / Markdown • до 100MB</p>
                 <input
                   ref={fileInputRef}
                   type="file"
                   onChange={handleFileSelect}
-                  accept=".pdf,.xlsx,.xls,.docx"
+                  accept=".pdf,.xlsx,.xls,.docx,.md,.markdown"
                   multiple={processingType === "catalog_single"}
                   className="hidden"
                 />
               </div>
+
+              {(processingType === "instruction" || processingType === "general") && (
+                <div className="space-y-2 rounded-lg border p-3 bg-muted/30">
+                  <Label htmlFor="companion-pdf">PDF для скачивания пользователем (опционально)</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Для Markdown-инструкций: знание берётся из .md, а в чате можно отдать PDF файла.
+                  </p>
+                  <Input
+                    id="companion-pdf"
+                    ref={companionInputRef}
+                    type="file"
+                    accept=".pdf"
+                    onChange={(e) => setCompanionPdf(e.target.files?.[0] ?? null)}
+                  />
+                  {companionPdf && (
+                    <p className="text-xs text-muted-foreground truncate">Выбран: {companionPdf.name}</p>
+                  )}
+                </div>
+              )}
 
               <Button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="w-full">
                 {isUploading ? (

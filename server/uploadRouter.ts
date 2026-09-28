@@ -149,6 +149,49 @@ function saveDocumentOriginalFile(
   return permanentPath;
 }
 
+function saveDocumentCompanionFile(
+  sourcePath: string,
+  documentId: number,
+  filename: string
+): string {
+  if (!fs.existsSync(sourcePath)) {
+    throw new Error(`Companion source file does not exist: ${sourcePath}`);
+  }
+  const uploadsDir = ensureDocumentUploadsDir();
+  const permanentPath = path.resolve(uploadsDir, `${documentId}_download_${filename}`);
+  fs.copyFileSync(sourcePath, permanentPath);
+  if (!fs.existsSync(permanentPath)) {
+    throw new Error("Companion file copy verification failed");
+  }
+  return permanentPath;
+}
+
+function resolveDocumentFilePath(
+  documentId: number,
+  filename: string,
+  kind: "original" | "download" = "original"
+): string | null {
+  const uploadsDir = path.join(process.cwd(), "uploads", "documents");
+  const preferred =
+    kind === "download"
+      ? path.resolve(uploadsDir, `${documentId}_download_${filename}`)
+      : path.resolve(uploadsDir, `${documentId}_${filename}`);
+
+  if (fs.existsSync(preferred)) return preferred;
+  if (!fs.existsSync(uploadsDir)) return null;
+
+  const files = fs.readdirSync(uploadsDir);
+  if (kind === "download") {
+    const matching = files.find((f) => f.startsWith(`${documentId}_download_`));
+    return matching ? path.resolve(uploadsDir, matching) : null;
+  }
+
+  const matching = files.find(
+    (f) => f.startsWith(`${documentId}_`) && !f.startsWith(`${documentId}_download_`)
+  );
+  return matching ? path.resolve(uploadsDir, matching) : null;
+}
+
 // Configure multer for file uploads
 const upload = multer({
   dest: "/tmp/uploads",
@@ -192,43 +235,26 @@ export function registerUploadRoutes(app: Express) {
       console.log(`[File Serve] Looking for file: ${permanentPath}`);
       console.log(`[File Serve] File exists: ${fs.existsSync(permanentPath)}`);
       
-      let filePath: string | null = null;
-      if (fs.existsSync(permanentPath)) {
-        filePath = permanentPath;
-        console.log(`[File Serve] Using permanent path: ${filePath}`);
+      let filePath = resolveDocumentFilePath(documentId, document.filename, "original");
+      if (filePath) {
+        console.log(`[File Serve] Using path: ${filePath}`);
       } else {
-        // Try to find any file with documentId prefix
-        if (fs.existsSync(uploadsDir)) {
-          const files = fs.readdirSync(uploadsDir);
-          const matchingFile = files.find(f => f.startsWith(`${documentId}_`));
-          if (matchingFile) {
-            filePath = path.resolve(uploadsDir, matchingFile);
-            console.log(`[File Serve] Found matching file by prefix: ${filePath}`);
-          }
-        }
-        
-        if (!filePath) {
-          // Try temp location as fallback
-          const tempPath = `/tmp/uploads/${documentId}_${document.filename}`;
-          console.log(`[File Serve] Trying temp path: ${tempPath}`);
-          if (fs.existsSync(tempPath)) {
-            filePath = tempPath;
-            console.log(`[File Serve] Using temp path: ${filePath}`);
-          }
+        // Try temp location as fallback
+        const tempPath = `/tmp/uploads/${documentId}_${document.filename}`;
+        console.log(`[File Serve] Trying temp path: ${tempPath}`);
+        if (fs.existsSync(tempPath)) {
+          filePath = tempPath;
+          console.log(`[File Serve] Using temp path: ${filePath}`);
         }
       }
 
       if (!filePath || !fs.existsSync(filePath)) {
         console.error(`[File Serve] File not found. Document ID: ${documentId}, Filename: ${document.filename}`);
-        console.error(`[File Serve] Checked paths:`);
-        console.error(`  - ${permanentPath}`);
-        console.error(`  - /tmp/uploads/${documentId}_${document.filename}`);
         return res.status(404).json({ 
           error: "File not found",
           details: {
             documentId,
             filename: document.filename,
-            checkedPaths: [permanentPath, `/tmp/uploads/${documentId}_${document.filename}`]
           }
         });
       }
@@ -241,6 +267,8 @@ export function registerUploadRoutes(app: Express) {
         ".doc": "application/msword",
         ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         ".xls": "application/vnd.ms-excel",
+        ".md": "text/markdown; charset=utf-8",
+        ".markdown": "text/markdown; charset=utf-8",
       };
       const contentType = contentTypeMap[ext] || "application/octet-stream";
 
@@ -283,21 +311,85 @@ export function registerUploadRoutes(app: Express) {
     }
   });
 
-  // Upload document endpoint
-  app.post("/api/upload/document", upload.single("file"), async (req: Request, res: Response) => {
+  // Companion PDF (or other) file for download alongside MD knowledge docs
+  app.get("/api/documents/:id/companion", async (req: Request, res: Response) => {
     try {
+      const documentId = parseInt(req.params.id, 10);
+      if (isNaN(documentId)) {
+        return res.status(400).json({ error: "Invalid document ID" });
+      }
 
-      if (!req.file) {
+      const document = await documentDb.getDocumentById(documentId);
+      if (!document) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+
+      const downloadFilename =
+        typeof (document as any).downloadFilename === "string"
+          ? ((document as any).downloadFilename as string)
+          : null;
+      if (!downloadFilename) {
+        return res.status(404).json({ error: "Companion download file not configured" });
+      }
+
+      const filePath = resolveDocumentFilePath(documentId, downloadFilename, "download");
+      if (!filePath || !fs.existsSync(filePath)) {
+        return res.status(404).json({ error: "Companion file not found on disk" });
+      }
+
+      const ext = path.extname(downloadFilename).toLowerCase();
+      const contentTypeMap: Record<string, string> = {
+        ".pdf": "application/pdf",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".doc": "application/msword",
+      };
+      const contentType = contentTypeMap[ext] || "application/octet-stream";
+      const download = String(req.query.download ?? "").toLowerCase();
+      const asAttachment = download === "1" || download === "true" || download === "yes" || ext === ".pdf";
+      const encodedName = encodeURIComponent(downloadFilename);
+
+      res.setHeader("Content-Type", contentType);
+      res.setHeader(
+        "Content-Disposition",
+        `${asAttachment ? "attachment" : "inline"}; filename="${encodedName}"; filename*=UTF-8''${encodedName}`
+      );
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET");
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+      res.sendFile(path.resolve(filePath));
+    } catch (error) {
+      console.error("Error serving companion file:", error);
+      res.status(500).json({ error: "Failed to serve companion file" });
+    }
+  });
+
+  // Upload document endpoint (optional companionPdf for instruction MD → PDF download)
+  app.post(
+    "/api/upload/document",
+    upload.fields([
+      { name: "file", maxCount: 1 },
+      { name: "companionPdf", maxCount: 1 },
+    ]),
+    async (req: Request, res: Response) => {
+    try {
+      const files = req.files as
+        | { [fieldname: string]: Express.Multer.File[] }
+        | undefined;
+      const file = files?.file?.[0] ?? (req as any).file;
+      if (!file) {
         res.status(400).json({ error: "No file uploaded" });
         return;
       }
 
-      const file = req.file;
+      const companion = files?.companionPdf?.[0];
+
       // Decode filename properly for UTF-8 (Russian characters)
       const filename = Buffer.from(file.originalname, 'latin1').toString('utf8');
       const fileSize = file.size;
-      const fileExt = path.extname(filename).toLowerCase(); // e.g., ".pdf"
-      const fileType = fileExt.substring(1); // Remove leading dot
+      const fileExt = path.extname(filename).toLowerCase();
+      let fileType = fileExt.substring(1);
+      if (fileType === "markdown") fileType = "md";
 
       // Get processing type from request (default: general)
       const processingType = (req.body.processingType || "general") as
@@ -316,7 +408,7 @@ export function registerUploadRoutes(app: Express) {
       
       // Log for debugging
       console.log(
-        `📤 Uploading: ${filename}, type: ${fileType}, size: ${fileSize}, processing: ${processingType}, skipFullProcessing: ${skipFullProcessing}, sku: ${sku || "-"}`
+        `📤 Uploading: ${filename}, type: ${fileType}, size: ${fileSize}, processing: ${processingType}, skipFullProcessing: ${skipFullProcessing}, sku: ${sku || "-"}, companion: ${companion ? "yes" : "no"}`
       );
 
       // Validate file
@@ -325,8 +417,20 @@ export function registerUploadRoutes(app: Express) {
         console.error(`❌ Validation failed: ${validation.error}`);
         // Clean up uploaded file
         fs.unlinkSync(file.path);
+        if (companion?.path && fs.existsSync(companion.path)) fs.unlinkSync(companion.path);
         res.status(400).json({ error: validation.error });
         return;
+      }
+
+      if (companion) {
+        const companionName = Buffer.from(companion.originalname, "latin1").toString("utf8");
+        const companionExt = path.extname(companionName).toLowerCase();
+        if (companionExt !== ".pdf") {
+          fs.unlinkSync(file.path);
+          fs.unlinkSync(companion.path);
+          res.status(400).json({ error: "Companion file must be a PDF" });
+          return;
+        }
       }
 
       // Create document record
@@ -341,6 +445,17 @@ export function registerUploadRoutes(app: Express) {
         docType: inferDocumentType(filename, processingType),
         title: title && title.length > 0 ? title : null,
       });
+
+      if (companion) {
+        try {
+          const companionName = Buffer.from(companion.originalname, "latin1").toString("utf8");
+          saveDocumentCompanionFile(companion.path, documentId, companionName);
+          await documentDb.updateDocumentDownloadFilename(documentId, companionName);
+          fs.unlinkSync(companion.path);
+        } catch (error) {
+          console.warn(`[Upload] Failed to store companion PDF for doc ${documentId}:`, error);
+        }
+      }
 
       // Process document in background
       processDocumentAsync(

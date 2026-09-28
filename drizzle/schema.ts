@@ -71,6 +71,8 @@ export const documents = mysqlTable(
       .default("general")
       .notNull(),
     title: varchar("title", { length: 512 }),
+    /** Optional PDF (or other) file offered for download when answering from this knowledge doc (e.g. MD instruction + PDF). */
+    downloadFilename: varchar("downloadFilename", { length: 255 }),
     year: int("year"),
     pages: int("pages"),
     processingStage: mysqlEnum("processingStage", ["queued", "parsing", "chunking", "embedding", "saving", "completed", "failed"]).default("queued").notNull(),

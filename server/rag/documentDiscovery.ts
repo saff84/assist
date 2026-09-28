@@ -11,9 +11,27 @@ export type BasicDocumentHit = {
   fileType: string;
   docType: DocumentType;
   chunksCount: number;
+  downloadFilename?: string | null;
 };
 
 export function buildDocumentAttachment(doc: BasicDocumentHit) {
+  const hasCompanion =
+    typeof doc.downloadFilename === "string" && doc.downloadFilename.trim().length > 0;
+  if (hasCompanion) {
+    const name = doc.downloadFilename!.trim();
+    const base = `/api/documents/${doc.id}/companion`;
+    return {
+      type: "document" as const,
+      documentId: doc.id,
+      filename: name,
+      title: doc.title,
+      fileType: pathExt(name) || "pdf",
+      docType: doc.docType,
+      previewUrl: base,
+      downloadUrl: `${base}?download=1`,
+    };
+  }
+
   const base = `/api/documents/${doc.id}/file`;
   return {
     type: "document" as const,
@@ -25,6 +43,11 @@ export function buildDocumentAttachment(doc: BasicDocumentHit) {
     previewUrl: base,
     downloadUrl: `${base}?download=1`,
   };
+}
+
+function pathExt(filename: string): string {
+  const m = /\.([a-z0-9]+)$/i.exec(filename);
+  return m ? m[1].toLowerCase() : "";
 }
 
 function scoreQueryToText(queryTokens: string[], queryNormalized: string, text: string): number {
@@ -65,6 +88,7 @@ export async function findBestDocumentsByTitle(
       fileType: documents.fileType,
       docType: documents.docType,
       chunksCount: documents.chunksCount,
+      downloadFilename: documents.downloadFilename,
     })
     .from(documents)
     .where(sql`${documents.status} = 'indexed' AND ${documents.docType} = ${docType}`)
