@@ -738,8 +738,14 @@ function createStructuredSectionChunks(
     const hasCharacteristic = hasColumnMatching(rows, /(характерист|параметр|показател)/i);
     const hasUnit = hasColumnMatching(rows, /(единиц|ед\.|unit|изм)/i);
     const hasValue = hasColumnMatching(rows, /(значен|value|показател|данн)/i);
+    const hasCoil = hasColumnMatching(rows, /(бухт|длин.*м\b|длина)/i);
 
-    if (hasArticle && (hasName || hasValue)) {
+    // Nomenclature / per-SKU rows (incl. coil sizes keyed by article)
+    if (hasArticle && (hasName || hasValue || hasCoil)) {
+      return "nomenclature" as const;
+    }
+    // Table with only «Артикул» + other numeric cols (no name/value headers)
+    if (hasArticle && !hasCharacteristic) {
       return "nomenclature" as const;
     }
     if (hasCharacteristic && (hasUnit || hasValue)) {
@@ -764,12 +770,13 @@ function createStructuredSectionChunks(
 
   let chunkIndex = 0;
 
-  // Фильтрация валидных секций: числовые секции или warranty
+  // Фильтрация валидных секций: числовые секции, warranty, root (MD без глубокой иерархии)
   const isNumericPath = (p: string) => /^\d+(?:\.\d+){0,3}$/.test(p);
   const validSections = sections.filter(
     (s) =>
       (s.isNumericSection !== false && isNumericPath(s.sectionPath)) ||
-      s.sectionPath === "warranty"
+      s.sectionPath === "warranty" ||
+      (processingType === "catalog" && s.sectionPath === "root")
   );
 
   // Логирование для отладки
@@ -1360,14 +1367,18 @@ export async function processDocument(
       // Проверяем, является ли это таблицей "Номенклатура ..."
       const elementContent = element.content?.toLowerCase() || "";
       const elementHeading = element.heading?.toLowerCase() || "";
-      const isNomenclatureTable = 
+      const hasArticleCol = element.tableRows.some((row) =>
+        Object.keys(row).some((k) => /артикул|sku|^код$/i.test(k))
+      );
+      const isNomenclatureTable =
         elementHeading.includes("номенклатура") ||
         elementContent.includes("номенклатура") ||
-        // Проверяем структуру таблицы - наличие колонок "Артикул" и "Наименование"
-        (element.tableRows.some(row => {
+        hasArticleCol ||
+        (element.tableRows.some((row) => {
           const keys = Object.keys(row);
-          return keys.some(k => /артикул/i.test(k)) && keys.some(k => /наименование/i.test(k));
-        }) && element.tableRows.length > 2);
+          return keys.some((k) => /артикул/i.test(k)) && keys.some((k) => /наименование/i.test(k));
+        }) &&
+          element.tableRows.length > 2);
       
       const products = extractProductsFromTableRows(
         element.tableRows,

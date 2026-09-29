@@ -370,12 +370,16 @@ export function registerUploadRoutes(app: Express) {
       const title = titleRaw?.toString().trim();
       const skuRaw = typeof req.body.sku === "string" ? req.body.sku : undefined;
       const sku = skuRaw?.toString().trim();
-      // Get skip processing flag (for manual annotation)
-      const skipFullProcessing = req.body.skipFullProcessing === "true" || req.body.skipFullProcessing === true;
+      const skipFullProcessingRaw =
+        req.body.skipFullProcessing === "true" || req.body.skipFullProcessing === true;
+      // Markdown catalog/product cards are auto-indexed (no manual PDF regions)
+      const isMarkdownCatalog =
+        (fileType === "md" || fileType === "markdown") && processingType === "catalog";
+      const skipFullProcessing = skipFullProcessingRaw && !isMarkdownCatalog;
       
       // Log for debugging
       console.log(
-        `📤 Uploading: ${filename}, type: ${fileType}, size: ${fileSize}, processing: ${processingType}, skipFullProcessing: ${skipFullProcessing}, sku: ${sku || "-"}, companion: ${companion ? "yes" : "no"}`
+        `📤 Uploading: ${filename}, type: ${fileType}, size: ${fileSize}, processing: ${processingType}, skipFullProcessing: ${skipFullProcessing}${isMarkdownCatalog ? " (md catalog auto)" : ""}, sku: ${sku || "-"}, companion: ${companion ? "yes" : "no"}`
       );
 
       // Validate file
@@ -469,6 +473,100 @@ export function registerUploadRoutes(app: Express) {
       res.status(500).json({ error: "Failed to upload document" });
     }
   });
+}
+
+/**
+ * Seed product group + items for a catalog document that already has product rows
+ * (typical MD product card: one group, many SKUs).
+ */
+async function seedCatalogGroupFromExtractedProducts(
+  documentId: number,
+  meta: {
+    title?: string | null;
+    filename: string;
+    products: Array<{
+      sku: string;
+      name?: string | null;
+      sectionId?: number | null;
+      pageNumber?: number | null;
+      attributes?: Record<string, string | number | null> | null;
+    }>;
+  }
+) {
+  const unique = new Map<
+    string,
+    {
+      sku: string;
+      name?: string | null;
+      sectionId?: number | null;
+      pageNumber?: number | null;
+      attributes?: Record<string, string | number | null> | null;
+    }
+  >();
+  for (const p of meta.products) {
+    const sku = (p.sku || "").trim();
+    if (!sku || unique.has(sku)) continue;
+    unique.set(sku, p);
+  }
+  if (unique.size === 0) return;
+
+  const displayName =
+    (meta.title && meta.title.trim()) ||
+    meta.filename.replace(/\.[^.]+$/, "").trim() ||
+    `Товар ${documentId}`;
+
+  await documentDb.updateDocumentTitle(documentId, displayName);
+
+  const groupId = await documentDb.createProductGroup({
+    documentId,
+    name: displayName,
+    description:
+      unique.size > 1
+        ? `Автосоздано из MD: ${unique.size} артикулов`
+        : "Автосоздано из MD-карточки товара",
+    createdBy: 0,
+  });
+
+  let sortOrder = 0;
+  const productRecords: Array<{
+    documentId: number;
+    sku: string;
+    name: string | null;
+    groupId: number;
+    sectionId: number | null;
+    attributes: Record<string, string | number | null>;
+    pageNumber: number | null;
+  }> = [];
+
+  for (const p of unique.values()) {
+    const itemName =
+      (p.name && String(p.name).trim()) || `${displayName} (${p.sku})`;
+    await documentDb.createProductItem({
+      documentId,
+      groupId,
+      name: itemName,
+      description: `SKU: ${p.sku}`,
+      sortOrder: sortOrder++,
+      createdBy: 0,
+    });
+    productRecords.push({
+      documentId,
+      sku: p.sku,
+      name: itemName,
+      groupId,
+      sectionId: p.sectionId ?? null,
+      attributes: {
+        ...(p.attributes ?? {}),
+        source: "catalog_md",
+      },
+      pageNumber: p.pageNumber ?? null,
+    });
+  }
+
+  await documentDb.replaceDocumentProducts(documentId, productRecords);
+  console.log(
+    `[Upload] Seeded catalog MD group for doc ${documentId}: groupId=${groupId}, skus=${productRecords.length}`
+  );
 }
 
 /**
@@ -900,6 +998,39 @@ async function processDocumentAsync(
     await documentDb.insertDocumentChunks(chunkRecords);
     // Sections already saved above, now save products
     await documentDb.replaceDocumentProducts(documentId, productRecords);
+
+    // MD product card: build product_group + product_items from extracted SKUs
+    const isMd =
+      filename.toLowerCase().endsWith(".md") ||
+      filename.toLowerCase().endsWith(".markdown") ||
+      fileType === "md";
+    if (processingType === "catalog" && isMd) {
+      try {
+        if (productRecords.length > 0) {
+          await seedCatalogGroupFromExtractedProducts(documentId, {
+            title: meta.title ?? processed.title ?? null,
+            filename,
+            products: productRecords.map((p) => ({
+              sku: p.sku,
+              name: p.name,
+              sectionId: p.sectionId ?? null,
+              pageNumber: p.pageNumber ?? null,
+              attributes: p.attributes ?? null,
+            })),
+          });
+        } else if (meta.sku || meta.title) {
+          // Fallback: form fields when MD has no nomenclature table
+          await seedSingleProductCatalogScaffold(documentId, {
+            title: meta.title ?? processed.title ?? null,
+            sku: meta.sku ?? null,
+            filename,
+          });
+        }
+      } catch (error) {
+        console.warn(`[Upload] Failed to seed catalog MD group for doc ${documentId}:`, error);
+      }
+    }
+
     await documentDb.updateDocumentProgress(
       documentId,
       "saving",
@@ -923,7 +1054,7 @@ async function processDocumentAsync(
           pageStart: section.pageStart,
           pageEnd: section.pageEnd,
         })),
-        title: processed.title,
+        title: meta.title ?? processed.title,
         pages: processed.numPages,
         docType: inferDocumentType(filename, processingType),
       }

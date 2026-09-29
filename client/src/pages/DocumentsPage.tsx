@@ -126,16 +126,28 @@ export default function DocumentsPage() {
     const selected = Array.from(files);
 
     if (processingType === "catalog_single") {
-      if (selected.length === 1 && (!productTitle.trim() || !productSku.trim())) {
-        toast.error("Для одного файла укажите название и артикул (SKU)");
+      const mdOnly = selected.every((f) => {
+        const ext = "." + (f.name.split(".").pop() || "").toLowerCase();
+        return ext === ".md" || ext === ".markdown";
+      });
+
+      // PDF/DOCX/XLSX: нужен title+sku для scaffold. MD: SKU из таблиц внутри файла.
+      if (
+        !mdOnly &&
+        selected.length === 1 &&
+        (!productTitle.trim() || !productSku.trim())
+      ) {
+        toast.error(
+          "Для PDF/DOCX/XLSX укажите название и артикул (SKU), либо загрузите Markdown-карточку"
+        );
         if (fileInputRef.current) fileInputRef.current.value = "";
         return;
       }
-      // Batch: each file = separate document. If many files selected with one title/sku,
-      // use filename as title suffix for uniqueness when >1 file.
+
       setIsUploading(true);
       try {
         let lastId: number | null = null;
+        let mdCount = 0;
         for (let i = 0; i < selected.length; i++) {
           const file = selected[i];
           const fileExt = "." + file.name.split(".").pop()?.toLowerCase();
@@ -147,10 +159,12 @@ export default function DocumentsPage() {
             toast.error(`Пропуск ${file.name}: больше 100MB`);
             continue;
           }
+          const isMd = fileExt === ".md" || fileExt === ".markdown";
+          if (isMd) mdCount += 1;
           const baseName = file.name.replace(/\.[^.]+$/, "");
           const title =
             selected.length === 1
-              ? productTitle.trim()
+              ? productTitle.trim() || (isMd ? baseName : "")
               : productTitle.trim()
                 ? `${productTitle.trim()} — ${baseName}`
                 : baseName;
@@ -159,18 +173,35 @@ export default function DocumentsPage() {
               ? productSku.trim()
               : productSku.trim()
                 ? `${productSku.trim()}-${i + 1}`
-                : baseName.slice(0, 64);
-          lastId = await uploadFile(file, "catalog_single", { title, sku, redirect: false });
+                : isMd
+                  ? ""
+                  : baseName.slice(0, 64);
+          lastId = await uploadFile(file, "catalog_single", {
+            title: title || undefined,
+            sku: sku || undefined,
+            redirect: false,
+            companionPdf:
+              selected.length === 1 && isMd ? companionPdf ?? undefined : undefined,
+            autoCatalogMd: isMd,
+          });
         }
         setIsUploadDialogOpen(false);
         setProductTitle("");
         setProductSku("");
+        setCompanionPdf(null);
+        if (companionInputRef.current) companionInputRef.current.value = "";
         if (fileInputRef.current) fileInputRef.current.value = "";
         await refetch();
-        if (lastId && selected.length === 1) {
+        if (mdCount > 0 && mdCount === selected.length) {
+          toast.success(
+            selected.length === 1
+              ? "MD-карточка товара загружена и индексируется автоматически"
+              : `Загружено MD-карточек: ${selected.length} (автоиндексация)`
+          );
+        } else if (lastId && selected.length === 1) {
           setLocation(`/documents/${lastId}/annotate`);
         } else if (selected.length > 1) {
-          toast.success(`Загружено файлов: ${selected.length}. Откройте каждый для разметки.`);
+          toast.success(`Загружено файлов: ${selected.length}. PDF — на разметку; MD — автоиндексация.`);
         }
       } finally {
         setIsUploading(false);
@@ -199,7 +230,13 @@ export default function DocumentsPage() {
   const uploadFile = async (
     file: File,
     type: ProcessingType,
-    opts?: { title?: string; sku?: string; redirect?: boolean; companionPdf?: File }
+    opts?: {
+      title?: string;
+      sku?: string;
+      redirect?: boolean;
+      companionPdf?: File;
+      autoCatalogMd?: boolean;
+    }
   ): Promise<number | null> => {
     const shouldRedirect = opts?.redirect !== false;
     if (opts?.redirect !== false) {
@@ -213,12 +250,15 @@ export default function DocumentsPage() {
       if (opts?.companionPdf) {
         formData.append("companionPdf", opts.companionPdf);
       }
+      const isMd =
+        opts?.autoCatalogMd === true ||
+        /\.(md|markdown)$/i.test(file.name);
       const skipFullProcessing =
         type === "manual" ||
         type === "certificate" ||
         type === "passport" ||
         type === "warranty_faq" ||
-        type === "catalog_single";
+        (type === "catalog_single" && !isMd);
       // catalog_single keeps catalog docType for RAG; manual stays general
       const actualProcessingType =
         type === "manual" ? "general" : type === "catalog_single" ? "catalog" : type;
@@ -647,8 +687,8 @@ export default function DocumentsPage() {
                 })}
               </div>
               <p className="text-xs text-muted-foreground">
-                «Каталог» — авторазбор большого PDF. «1 товар» — отдельный файл на товар
-                (docType=catalog + ручная разметка, без потери качества поиска).
+                «Каталог» — авторазбор большого PDF/MD. «1 товар» — карточка товара (группа SKU):
+                PDF → ручная разметка; MD → SKU и характеристики из строк таблиц с колонкой «Артикул».
               </p>
               {processingType === "catalog_single" && (
                 <div className="grid gap-3 sm:grid-cols-2 pt-1">
@@ -667,14 +707,119 @@ export default function DocumentsPage() {
                       id="product-sku"
                       value={productSku}
                       onChange={(e) => setProductSku(e.target.value)}
-                      placeholder="Напр. 4016"
+                      placeholder="Для PDF: один SKU; для MD — опционально"
                     />
                   </div>
                   <p className="sm:col-span-2 text-xs text-muted-foreground">
-                    Можно выбрать несколько файлов: каждый станет отдельным документом.
-                    Для пакета название/SKU будут дополнены именем файла.
+                    <strong>PDF/DOCX:</strong> укажите название и SKU → ручная разметка таблиц.
+                    <br />
+                    <strong>Markdown:</strong> название/SKU в форме необязательны, если они есть в файле.
+                    Можно приложить PDF для скачивания пользователю.
                   </p>
                 </div>
+              )}
+              {(processingType === "catalog_single" || processingType === "catalog") && (
+                <details className="rounded-lg border bg-muted/40 p-3 text-sm">
+                  <summary className="cursor-pointer font-medium select-none">
+                    Правила разметки Markdown для товаров
+                  </summary>
+                  <div className="mt-3 space-y-3 text-xs text-muted-foreground leading-relaxed">
+                    <p>
+                      <strong className="text-foreground">Один файл = один товар</strong> (линейка).
+                      Все артикулы и их техданные берутся{" "}
+                      <strong className="text-foreground">из строк таблиц</strong>, где первая
+                      (или явная) колонка — <code>Артикул</code>. Отдельные заголовки{" "}
+                      <code>### 1181</code> на каждый SKU <em>не нужны</em> — в таблице может
+                      быть десятки артикулов.
+                    </p>
+                    <ul className="list-disc list-inside space-y-1.5">
+                      <li>
+                        <strong className="text-foreground"># Заголовок</strong> — название
+                        линейки (product group), например «Труба SANEXT Универсальные».
+                      </li>
+                      <li>
+                        <strong className="text-foreground">## Номенклатура …</strong> — таблица
+                        со столбцом <code>Артикул</code> и колонками характеристик{" "}
+                        <em>этой строки</em> (наименование, диаметр, толщина стенки, длина бухты
+                        и т.д.). Одна строка = один SKU; одинаковое наименование при разной
+                        длине бухты — разные артикулы.
+                      </li>
+                      <li>
+                        <strong className="text-foreground">## Размеры бухт …</strong> (и любые
+                        другие таблицы по SKU) — снова колонка <code>Артикул</code> + параметры
+                        бухты/габариты/вес. Система сопоставит значения с тем же артикулом из
+                        номенклатуры.
+                      </li>
+                      <li>
+                        <strong className="text-foreground">## Характеристики</strong> — только
+                        общие для всей линейки параметры: таблица{" "}
+                        <code>Параметр | Значение</code>{" "}
+                        <em>без</em> колонки Артикул (материал, макс. температура и т.п.).
+                      </li>
+                      <li>
+                        В каждой таблице «по артикулам» колонка <code>Артикул</code> обязательна;
+                        значения в строке относятся только к этому артикулу.
+                      </li>
+                      <li>
+                        Не смешивайте в одной таблице строки{" "}
+                        <code>Параметр | Значение</code> и строки номенклатуры с артикулами.
+                      </li>
+                      <li>
+                        Таблицы — GFM: строка заголовков +{" "}
+                        <code className="text-[11px]">| --- | --- |</code>.
+                      </li>
+                    </ul>
+                    <div>
+                      <p className="font-medium text-foreground mb-1">
+                        Пример (как в каталоге):
+                      </p>
+                      <pre className="max-h-64 overflow-auto rounded-md bg-background border p-2 text-[11px] leading-snug whitespace-pre-wrap text-foreground/90">{`# Труба SANEXT «Универсальные»
+
+## Описание
+Краткое описание линейки.
+
+## Номенклатура труб SANEXT «Универсальные»
+| Артикул | Наименование | Диаметр наружный, мм | Толщина стенки, мм | Длина бухты, м |
+| --- | --- | --- | --- | --- |
+| 1181 | 16×2,2 | 16 | 2,2 | 100 |
+| 1182 | 16×2,2 | 16 | 2,2 | 200 |
+| 1281 | 20×2,8 | 20 | 2,8 | 100 |
+| 1282 | 20×2,8 | 20 | 2,8 | 200 |
+
+## Размер бухт труб SANEXT «Универсальные»
+| Артикул | Диаметр трубы d, мм | Толщина стенки s, мм | Длина бухты, м | Внутренний диаметр бухты a, мм | Высота бухты b, мм | Внешний диаметр бухты c, мм | Вес бухты, кг |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1181 | 16 | 2,2 | 100 | 310 | 165 | 550 | 10,3 |
+| 1182 | 16 | 2,2 | 200 | 330 | 300 | 550 | 20,6 |
+| 1281 | 20 | 2,8 | 100 | 300 | 230 | 550 | 15,5 |
+| 1282 | 20 | 2,8 | 200 | 330 | 210 | 780 | 30,6 |
+
+## Характеристики
+| Параметр | Значение |
+| --- | --- |
+| Материал | PE-Xa / EVOH |
+| Макс. температура | 95 °C |
+`}</pre>
+                    </div>
+                  </div>
+                </details>
+              )}
+              {processingType === "instruction" && (
+                <details className="rounded-lg border bg-muted/40 p-3 text-sm">
+                  <summary className="cursor-pointer font-medium select-none">
+                    Правила разметки Markdown для инструкций
+                  </summary>
+                  <ul className="mt-3 list-disc list-inside space-y-1 text-xs text-muted-foreground">
+                    <li>
+                      Иерархия заголовков <code>#</code> / <code>##</code> / <code>###</code> —
+                      разделы для поиска.
+                    </li>
+                    <li>Таблицы — только GFM (<code>| колонка |</code> + разделитель ---).</li>
+                    <li>
+                      Опционально приложите PDF для скачивания (знание берётся из MD).
+                    </li>
+                  </ul>
+                </details>
               )}
             </div>
 
@@ -699,11 +844,14 @@ export default function DocumentsPage() {
                 />
               </div>
 
-              {(processingType === "instruction" || processingType === "general") && (
+              {(processingType === "instruction" ||
+                processingType === "general" ||
+                processingType === "catalog_single" ||
+                processingType === "catalog") && (
                 <div className="space-y-2 rounded-lg border p-3 bg-muted/30">
                   <Label htmlFor="companion-pdf">PDF для скачивания пользователем (опционально)</Label>
                   <p className="text-xs text-muted-foreground">
-                    Для Markdown-инструкций: знание берётся из .md, а в чате можно отдать PDF файла.
+                    Для Markdown: знание из .md, в чате можно отдать PDF-файл товара/инструкции.
                   </p>
                   <Input
                     id="companion-pdf"
