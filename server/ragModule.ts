@@ -31,6 +31,7 @@ import {
   buildDocumentAttachment,
   findBestDocumentsByTitle,
 } from "./rag/documentDiscovery";
+import * as companyKnowledge from "./companyKnowledge";
 import type {
   ContextSourceEntry,
   ContextTableEntry,
@@ -84,6 +85,8 @@ export interface RAGResponse {
   }>;
   responseTime: number;
   tokensUsed: number;
+  suggestedTopics?: Array<"products" | "instructions" | "certificates" | "passports" | "warranty">;
+  mode?: "company" | "scoped";
   diagnostics?: {
     retrieval: RetrievalDiagnostics;
     context: string;
@@ -3135,6 +3138,227 @@ function buildDiagnosticsPayload(
   };
 }
 
+const COMPANY_NO_ANSWER_MARKER = "NO_COMPANY_INFO";
+
+async function buildSuggestedTopics(): Promise<
+  NonNullable<RAGResponse["suggestedTopics"]>
+> {
+  const availability = await documentDb.getDocTypeAvailability([
+    "catalog",
+    "instruction",
+    "certificate",
+    "passport",
+    "warranty_faq",
+  ]);
+  const topics: NonNullable<RAGResponse["suggestedTopics"]> = [];
+  if (availability.catalog) topics.push("products");
+  if (availability.instruction) topics.push("instructions");
+  if (availability.certificate) topics.push("certificates");
+  if (availability.passport) topics.push("passports");
+  if (availability.warranty_faq) topics.push("warranty");
+  return topics;
+}
+
+function buildCompanyNoAnswerMessage(
+  suggested: NonNullable<RAGResponse["suggestedTopics"]>
+): string {
+  const labels: Record<string, string> = {
+    products: "Товары",
+    instructions: "Инструкции",
+    certificates: "Сертификаты",
+    passports: "Паспорта",
+    warranty: "Гарантия",
+  };
+  const list = suggested.map((t) => labels[t] || t).filter(Boolean);
+  const topicsHint = list.length
+    ? `Или выберите категорию: ${list.join(", ")}.`
+    : "Или выберите категорию вопроса выше (товары, инструкции и т.д.).";
+  return (
+    "В материалах о компании нет ответа на этот вопрос. " +
+    "Попробуйте переформулировать запрос. " +
+    topicsHint
+  );
+}
+
+function looksLikeCompanyRefusal(text: string): boolean {
+  if (!text.trim()) return true;
+  if (text.includes(COMPANY_NO_ANSWER_MARKER)) return true;
+  return /нет информации|не найден[аоы]?\s+информац|не располагаю|в (предоставленных )?материалах нет|в документах о компании нет/i.test(
+    text
+  );
+}
+
+async function processCompanyKnowledgeQuery(
+  ragQuery: RAGQuery,
+  config: RAGConfig,
+  start: number
+): Promise<RAGResponse> {
+  const suggestedTopics = await buildSuggestedTopics();
+  const assembled = companyKnowledge.readAssembledMarkdown().trim();
+  const stats = companyKnowledge.getAssembledStats();
+
+  if (!assembled || stats.sectionCount === 0) {
+    const response = buildCompanyNoAnswerMessage(suggestedTopics);
+    return {
+      response,
+      sources: [],
+      responseTime: Date.now() - start,
+      tokensUsed: Math.ceil(response.length / TOKEN_CHAR_RATIO),
+      suggestedTopics,
+      mode: "company",
+    };
+  }
+
+  const maxTokens = companyKnowledge.getCompanyFullMdMaxTokens();
+  const mdTokens = companyKnowledge.estimateTokens(assembled);
+  const useFullMd = mdTokens <= maxTokens;
+
+  let messageContent: string;
+
+  if (useFullMd) {
+    console.log(
+      `[RAG] Company mode: full MD → LLM (${mdTokens} est. tokens, limit ${maxTokens})`
+    );
+    const systemPrompt = `Ты — AI-ассистент SANEXT. Отвечай ТОЛЬКО по материалам о компании ниже.
+Язык ответа: строго русский.
+Если в материалах нет данных по вопросу — ответь ровно одной строкой: ${COMPANY_NO_ANSWER_MARKER}
+Не придумывай факты. Будь кратким и по делу.`;
+    const userMessage = `Материалы о компании:
+
+${assembled}
+
+---
+Вопрос пользователя: ${ragQuery.query}
+
+Ответ:`;
+
+    const llmResponse = await invokeLLM({
+      model: config.llm.model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
+      ],
+      temperature: config.llm.temperature,
+      top_p: config.llm.topP,
+      repeat_penalty: config.llm.repeatPenalty,
+      maxTokens: Math.min(config.llm.maxTokens ?? 2048, 2048),
+    });
+    messageContent =
+      llmResponse.choices[0]?.message?.content?.toString() ??
+      COMPANY_NO_ANSWER_MARKER;
+  } else {
+    console.log(
+      `[RAG] Company mode: RAG fallback (${mdTokens} est. tokens > ${maxTokens})`
+    );
+    const retrieval = await retrieveAndScoreChunks(ragQuery.query, config, {
+      forceDocumentType: "company",
+      topK: 12,
+    });
+    const companyChunks = retrieval.chunks.filter(
+      (c) => c.docType === "company"
+    );
+    if (!companyChunks.length) {
+      const response = buildCompanyNoAnswerMessage(suggestedTopics);
+      return {
+        response,
+        sources: [],
+        responseTime: Date.now() - start,
+        tokensUsed: Math.ceil(response.length / TOKEN_CHAR_RATIO),
+        suggestedTopics,
+        mode: "company",
+      };
+    }
+
+    const context = buildContext(
+      companyChunks.slice(0, 12).map((chunk) => ({
+        documentId: chunk.documentId,
+        filename: chunk.filename,
+        documentType: chunk.docType,
+        chunkIndex: chunk.chunkIndex,
+        relevance: chunk.relevance,
+        chunkContent: chunk.content,
+        sectionPath: chunk.sectionPath,
+        pageStart: chunk.pageNumber ?? undefined,
+        boostsApplied: chunk.boostsApplied ?? [],
+      })),
+      {
+        maxChunks: 12,
+        maxChunksPerDoc: 8,
+        maxTokens: Math.min(config.retrieval.contextCaps.maxTokens, 6000),
+        chunkTokenLimit: config.retrieval.contextCaps.chunkTokenLimit,
+      }
+    );
+
+    const systemPrompt = `Ты — AI-ассистент SANEXT. Отвечай ТОЛЬКО по источникам о компании.
+Если сведений нет — ответь ровно: ${COMPANY_NO_ANSWER_MARKER}`;
+    const userMessage = `Источники:
+${context.context}
+
+Вопрос: ${ragQuery.query}
+
+Ответ:`;
+
+    const llmResponse = await invokeLLM({
+      model: config.llm.model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
+      ],
+      temperature: config.llm.temperature,
+      top_p: config.llm.topP,
+      repeat_penalty: config.llm.repeatPenalty,
+      maxTokens: Math.min(config.llm.maxTokens ?? 2048, 2048),
+    });
+    messageContent =
+      llmResponse.choices[0]?.message?.content?.toString() ??
+      COMPANY_NO_ANSWER_MARKER;
+
+    if (looksLikeCompanyRefusal(messageContent)) {
+      const response = buildCompanyNoAnswerMessage(suggestedTopics);
+      return {
+        response,
+        sources: mapSourcesForResponse(context.usedSources).sources,
+        responseTime: Date.now() - start,
+        tokensUsed: Math.ceil(response.length / TOKEN_CHAR_RATIO),
+        suggestedTopics,
+        mode: "company",
+      };
+    }
+
+    return {
+      response: messageContent.trim(),
+      sources: mapSourcesForResponse(context.usedSources).sources,
+      responseTime: Date.now() - start,
+      tokensUsed:
+        Math.ceil(ragQuery.query.length / TOKEN_CHAR_RATIO) +
+        Math.ceil(messageContent.length / TOKEN_CHAR_RATIO),
+      mode: "company",
+    };
+  }
+
+  if (looksLikeCompanyRefusal(messageContent)) {
+    const response = buildCompanyNoAnswerMessage(suggestedTopics);
+    return {
+      response,
+      sources: [],
+      responseTime: Date.now() - start,
+      tokensUsed: Math.ceil(response.length / TOKEN_CHAR_RATIO),
+      suggestedTopics,
+      mode: "company",
+    };
+  }
+
+  return {
+    response: messageContent.replace(COMPANY_NO_ANSWER_MARKER, "").trim(),
+    sources: [],
+    responseTime: Date.now() - start,
+    tokensUsed:
+      Math.ceil(ragQuery.query.length / TOKEN_CHAR_RATIO) +
+      Math.ceil(messageContent.length / TOKEN_CHAR_RATIO),
+    mode: "company",
+  };
+}
+
 export async function processRAGQuery(
   ragQuery: RAGQuery,
   options?: RAGOptions
@@ -3157,11 +3381,14 @@ export async function processRAGQuery(
         return "Паспорта";
       case "warranty_faq":
         return "Гарантия (FAQ)";
+      case "company":
+        return "О компании";
       default:
         return "Общие документы";
     }
   };
 
+  // Document-list meta questions work regardless of category
   const metaResponse = await handleMetaQuery(ragQuery.query);
   if (metaResponse) {
     return {
@@ -3170,6 +3397,11 @@ export async function processRAGQuery(
       responseTime: Date.now() - start,
       tokensUsed: Math.ceil(metaResponse.length / TOKEN_CHAR_RATIO),
     };
+  }
+
+  // Default / explicit company mode — do not mix with catalog/instruction corpus
+  if (!forcedDocType || forcedDocType === "company") {
+    return processCompanyKnowledgeQuery(ragQuery, config, start);
   }
 
   const retrieval = await retrieveAndScoreChunks(

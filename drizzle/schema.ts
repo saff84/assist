@@ -57,6 +57,7 @@ export const documents = mysqlTable(
       "certificate",
       "passport",
       "warranty_faq",
+      "company",
     ])
       .default("general")
       .notNull(),
@@ -67,6 +68,7 @@ export const documents = mysqlTable(
       "certificate",
       "passport",
       "warranty_faq",
+      "company",
     ])
       .default("general")
       .notNull(),

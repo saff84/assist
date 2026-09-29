@@ -16,6 +16,7 @@ import StatisticsPage from "./pages/StatisticsPage";
 import UsersPage from "./pages/UsersPage";
 import FaqChunksPage from "./pages/FaqChunksPage";
 import LlmSettingsPage from "./pages/LlmSettingsPage";
+import CompanyPage from "./pages/CompanyPage";
 import LoginPage from "./pages/LoginPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import WidgetPage from "./pages/WidgetPage";
@@ -107,6 +108,13 @@ function Router() {
         <AuthGate>
           <DashboardLayout>
             <StatisticsPage />
+          </DashboardLayout>
+        </AuthGate>
+      </Route>
+      <Route path="/company">
+        <AuthGate>
+          <DashboardLayout>
+            <CompanyPage />
           </DashboardLayout>
         </AuthGate>
       </Route>

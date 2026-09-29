@@ -88,7 +88,8 @@ export async function updateDocumentMetadata(
       | "catalog"
       | "certificate"
       | "passport"
-      | "warranty_faq";
+      | "warranty_faq"
+      | "company";
   }
 ): Promise<void> {
   const db = await getDb();
@@ -308,6 +309,7 @@ export async function getDocTypeAvailability(
     certificate: false,
     passport: false,
     warranty_faq: false,
+    company: false,
   };
 
   if (!docTypes.length) return base;

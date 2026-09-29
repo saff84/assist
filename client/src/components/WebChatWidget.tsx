@@ -60,7 +60,7 @@ function resolveApiBaseUrl(apiBaseUrl?: string): string {
 
 export function WebChatWidget({
   title = "SANEXT Assistant",
-  subtitle = "Задайте вопрос по товарам",
+  subtitle = "Спросите о компании или выберите тему",
   position = "bottom-right",
   apiBaseUrl,
 }: WebChatWidgetProps) {
@@ -130,7 +130,7 @@ export function WebChatWidget({
   };
 
   const handleSendMessage = async () => {
-    if (!input.trim() || processingStage !== "idle" || !forceDocumentType || isSending) return;
+    if (!input.trim() || processingStage !== "idle" || isSending) return;
 
     const userMessage: Message = {
       id: `msg-${Date.now()}`,
@@ -159,7 +159,7 @@ export function WebChatWidget({
       const response = await widgetApi.current.askAssistant({
         query,
         sessionId,
-        forceDocumentType,
+        ...(forceDocumentType ? { forceDocumentType } : {}),
       });
       appendAssistantMessage(
         response.response,
@@ -309,16 +309,28 @@ export function WebChatWidget({
               <div className="sanext-widget-bubble sanext-widget-bubble-assistant">
                 <div className="font-semibold mb-1 text-[15px]">Здравствуйте!</div>
                 <div className="text-[var(--sx-muted)] text-[13px]">
-                  Чтобы точнее искать по базе знаний, выберите тематику вопроса:
+                  Можно сразу спросить о компании или выбрать тематику для поиска по базе знаний:
                 </div>
                 <div className="sanext-widget-topics">
+                  <button
+                    type="button"
+                    className={`sanext-widget-topic ${!topic ? "sanext-widget-topic-active" : ""}`}
+                    onClick={() => {
+                      if (processingStage !== "idle") return;
+                      setTopic(null);
+                      setForceDocumentType(null);
+                    }}
+                    disabled={processingStage !== "idle"}
+                  >
+                    О компании
+                  </button>
                   <button
                     type="button"
                     className={`sanext-widget-topic ${topic === "products" ? "sanext-widget-topic-active" : ""}`}
                     onClick={() => handlePickTopic("products")}
                     disabled={processingStage !== "idle"}
                   >
-                    Вопрос по: Товарам
+                    Товары
                   </button>
                   {availableTopics.hasInstructions && (
                     <button
@@ -327,7 +339,7 @@ export function WebChatWidget({
                       onClick={() => handlePickTopic("instructions")}
                       disabled={processingStage !== "idle"}
                     >
-                      Вопрос по: Инструкциям
+                      Инструкции
                     </button>
                   )}
                   {availableTopics.hasCertificates && (
@@ -337,7 +349,7 @@ export function WebChatWidget({
                       onClick={() => handlePickTopic("certificates")}
                       disabled={processingStage !== "idle"}
                     >
-                      Вопрос по: Сертификатам
+                      Сертификаты
                     </button>
                   )}
                   {availableTopics.hasPassports && (
@@ -347,7 +359,7 @@ export function WebChatWidget({
                       onClick={() => handlePickTopic("passports")}
                       disabled={processingStage !== "idle"}
                     >
-                      Вопрос по: Паспортам
+                      Паспорта
                     </button>
                   )}
                   {availableTopics.hasWarrantyFaq && (
@@ -357,7 +369,7 @@ export function WebChatWidget({
                       onClick={() => handlePickTopic("warranty")}
                       disabled={processingStage !== "idle"}
                     >
-                      Вопрос по: По гарантии
+                      Гарантия
                     </button>
                   )}
                 </div>
@@ -365,8 +377,8 @@ export function WebChatWidget({
 
               <p className="sanext-widget-hint">
                 {forceDocumentType
-                  ? "Теперь ответьте на уточняющий вопрос выше и отправьте сообщение."
-                  : "Сначала выберите тематику."}
+                  ? "Выбрана тематика — задайте уточняющий вопрос."
+                  : "Режим «О компании» — можно писать сразу. Для товаров/монтажа выберите тему."}
               </p>
             </div>
           ) : (
@@ -409,14 +421,18 @@ export function WebChatWidget({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-            placeholder={forceDocumentType ? "Введите сообщение..." : "Выберите тематику выше..."}
-            disabled={isSending || processingStage !== "idle" || !forceDocumentType}
+            placeholder={
+              forceDocumentType
+                ? "Введите сообщение..."
+                : "Спросите о компании или выберите тему…"
+            }
+            disabled={isSending || processingStage !== "idle"}
             className="sanext-widget-input"
           />
           <button
             type="button"
             onClick={handleSendMessage}
-            disabled={!input.trim() || isSending || processingStage !== "idle" || !forceDocumentType}
+            disabled={!input.trim() || isSending || processingStage !== "idle"}
             className="sanext-widget-send"
             aria-label="Отправить"
           >

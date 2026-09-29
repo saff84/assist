@@ -49,9 +49,11 @@
       "maxChunksPerDoc": 12,
       "maxTokens": 9000,
       "chunkTokenLimit": 1400
-    }
+    },
+    "companyFullMdMaxTokens": 8000
   },
   "logging": {
     "enabled": true
   }
 }
+

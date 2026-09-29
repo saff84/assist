@@ -7,6 +7,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerUploadRoutes } from "../uploadRouter";
 import { registerFaqImageRoutes } from "../faqImageRoutes";
 import { registerWidgetRoutes } from "../widgetRoutes";
+import { registerCompanyRoutes } from "../companyRoutes";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -61,6 +62,7 @@ async function startServer() {
   // File upload routes
   registerUploadRoutes(app);
   registerFaqImageRoutes(app);
+  registerCompanyRoutes(app);
   // tRPC API
   app.use(
     "/api/trpc",

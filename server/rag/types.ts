@@ -4,7 +4,8 @@ export type DocumentType =
   | "general"
   | "certificate"
   | "passport"
-  | "warranty_faq";
+  | "warranty_faq"
+  | "company";
 
 export interface LLMConfig {
   model: string;

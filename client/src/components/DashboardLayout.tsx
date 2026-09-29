@@ -21,13 +21,14 @@ import {
 } from "@/components/ui/sidebar";
 import { APP_LOGO, APP_TITLE } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, LogOut, PanelLeft, FileText, Settings, MessageSquare, BarChart3, Users, HelpCircle, Bot, Code2 } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, FileText, Settings, MessageSquare, BarChart3, Users, HelpCircle, Bot, Code2, Building2 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/", roles: ["admin", "editor"] as const },
   { icon: FileText, label: "Documents", path: "/documents", roles: ["admin", "editor"] as const },
+  { icon: Building2, label: "О компании", path: "/company", roles: ["admin", "editor"] as const },
   { icon: HelpCircle, label: "FAQ Chunks", path: "/faq-chunks", roles: ["admin", "editor"] as const },
   { icon: Settings, label: "Prompt Editor", path: "/prompt-editor", roles: ["admin"] as const },
   { icon: Bot, label: "LLM", path: "/llm-settings", roles: ["admin"] as const },

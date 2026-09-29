@@ -10,7 +10,15 @@ const chatInputSchema = z.object({
   query: z.string().min(1),
   sessionId: z.string().optional(),
   forceDocumentType: z
-    .enum(["catalog", "instruction", "general", "certificate", "passport", "warranty_faq"])
+    .enum([
+      "catalog",
+      "instruction",
+      "general",
+      "certificate",
+      "passport",
+      "warranty_faq",
+      "company",
+    ])
     .optional(),
   includeSources: z.boolean().optional(),
 });
@@ -142,6 +150,8 @@ export function registerWidgetRoutes(app: Express) {
         response: response.response,
         attachments: response.attachments ?? [],
         sources: sources ?? [],
+        suggestedTopics: response.suggestedTopics ?? [],
+        mode: response.mode ?? (parsed.data.forceDocumentType ? "scoped" : "company"),
         responseTime: response.responseTime,
       });
     } catch (error) {

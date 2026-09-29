@@ -319,6 +319,7 @@ export const documentRouter = router({
             "certificate",
             "passport",
             "warranty_faq",
+            "company",
           ] satisfies ReadonlyArray<DocumentType>)
           .optional(),
       })

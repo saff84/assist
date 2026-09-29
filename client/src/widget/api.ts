@@ -4,7 +4,8 @@ export type WidgetDocumentType =
   | "general"
   | "certificate"
   | "passport"
-  | "warranty_faq";
+  | "warranty_faq"
+  | "company";
 
 export type WidgetAttachment = {
   type: "document";
@@ -33,10 +34,19 @@ export type WidgetSource = {
   sectionPath?: string | null;
 };
 
+export type WidgetSuggestedTopic =
+  | "products"
+  | "instructions"
+  | "certificates"
+  | "passports"
+  | "warranty";
+
 export type WidgetChatResponse = {
   response: string;
   attachments: WidgetAttachment[];
   sources?: WidgetSource[];
+  suggestedTopics?: WidgetSuggestedTopic[];
+  mode?: "company" | "scoped";
   responseTime: number;
 };
 
@@ -62,7 +72,7 @@ export class WidgetApiClient {
   async askAssistant(input: {
     query: string;
     sessionId: string;
-    forceDocumentType: WidgetDocumentType;
+    forceDocumentType?: WidgetDocumentType;
   }): Promise<WidgetChatResponse> {
     const response = await fetch(this.url("/api/widget/chat"), {
       method: "POST",
@@ -70,7 +80,9 @@ export class WidgetApiClient {
       body: JSON.stringify({
         query: input.query,
         sessionId: input.sessionId,
-        forceDocumentType: input.forceDocumentType,
+        ...(input.forceDocumentType
+          ? { forceDocumentType: input.forceDocumentType }
+          : {}),
       }),
     });
 
