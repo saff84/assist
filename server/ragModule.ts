@@ -32,6 +32,17 @@ import {
   findBestDocumentsByTitle,
 } from "./rag/documentDiscovery";
 import * as companyKnowledge from "./companyKnowledge";
+
+function publicAppBaseUrl(): string | null {
+  const fromEnv = process.env.PUBLIC_APP_URL?.trim().replace(/\/+$/, "");
+  return fromEnv || null;
+}
+
+function toDocumentAttachment(
+  doc: Parameters<typeof buildDocumentAttachment>[0]
+) {
+  return buildDocumentAttachment(doc, { publicBaseUrl: publicAppBaseUrl() });
+}
 import type {
   ContextSourceEntry,
   ContextTableEntry,
@@ -1823,7 +1834,7 @@ async function buildAttachmentsForSources(
     if (!shouldAttach) continue;
 
     attachments.push(
-      buildDocumentAttachment({
+      toDocumentAttachment({
         id: documentId,
         filename,
         title,
@@ -3430,7 +3441,7 @@ export async function processRAGQuery(
       return {
         response,
         sources: [],
-        attachments: hits.map(buildDocumentAttachment),
+        attachments: hits.map(toDocumentAttachment),
         responseTime: Date.now() - start,
         tokensUsed: Math.ceil(response.length / TOKEN_CHAR_RATIO),
       };

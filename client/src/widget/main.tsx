@@ -36,7 +36,7 @@ function findWidgetScript(): HTMLScriptElement | null {
   );
 }
 
-const WIDGET_ASSET_VERSION = "20260928c";
+const WIDGET_ASSET_VERSION = "20260930a";
 
 function ensureWidgetStyles(apiBaseUrl: string, script?: HTMLScriptElement | null) {
   const existing = document.getElementById("sanext-chat-widget-styles") as HTMLLinkElement | null;

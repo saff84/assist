@@ -14,12 +14,18 @@ export type BasicDocumentHit = {
   downloadFilename?: string | null;
 };
 
-export function buildDocumentAttachment(doc: BasicDocumentHit) {
+export function buildDocumentAttachment(
+  doc: BasicDocumentHit,
+  options?: { publicBaseUrl?: string | null }
+) {
   const hasCompanion =
     typeof doc.downloadFilename === "string" && doc.downloadFilename.trim().length > 0;
+  const prefix = (options?.publicBaseUrl || "").trim().replace(/\/+$/, "");
+  const withBase = (path: string) => (prefix ? `${prefix}${path}` : path);
+
   if (hasCompanion) {
     const name = doc.downloadFilename!.trim();
-    const base = `/api/documents/${doc.id}/companion`;
+    const base = withBase(`/api/documents/${doc.id}/companion`);
     return {
       type: "document" as const,
       documentId: doc.id,
@@ -32,7 +38,7 @@ export function buildDocumentAttachment(doc: BasicDocumentHit) {
     };
   }
 
-  const base = `/api/documents/${doc.id}/file`;
+  const base = withBase(`/api/documents/${doc.id}/file`);
   return {
     type: "document" as const,
     documentId: doc.id,

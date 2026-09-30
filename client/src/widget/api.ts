@@ -54,6 +54,26 @@ function normalizeBaseUrl(apiBaseUrl: string): string {
   return apiBaseUrl.replace(/\/+$/, "");
 }
 
+function absolutizeUrl(apiBaseUrl: string, pathOrUrl: string): string {
+  const raw = (pathOrUrl || "").trim();
+  if (!raw) return raw;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const base = normalizeBaseUrl(apiBaseUrl);
+  if (!base) return raw;
+  return raw.startsWith("/") ? `${base}${raw}` : `${base}/${raw}`;
+}
+
+function withAbsoluteAttachmentUrls(
+  apiBaseUrl: string,
+  attachments: WidgetAttachment[] | undefined
+): WidgetAttachment[] {
+  return (attachments ?? []).map((a) => ({
+    ...a,
+    previewUrl: absolutizeUrl(apiBaseUrl, a.previewUrl),
+    downloadUrl: absolutizeUrl(apiBaseUrl, a.downloadUrl),
+  }));
+}
+
 export class WidgetApiClient {
   constructor(private readonly apiBaseUrl: string) {}
 
@@ -97,6 +117,10 @@ export class WidgetApiClient {
       throw new Error(`Failed to send message (${response.status})${detail}`);
     }
 
-    return response.json() as Promise<WidgetChatResponse>;
+    const data = (await response.json()) as WidgetChatResponse;
+    return {
+      ...data,
+      attachments: withAbsoluteAttachmentUrls(this.apiBaseUrl, data.attachments),
+    };
   }
 }
