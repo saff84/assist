@@ -3,6 +3,8 @@ import { documents, documentChunks, systemPrompts, chatHistory, queryStats, sect
 import { eq, desc, and, gte, sql, asc, or, inArray } from "drizzle-orm";
 import type { InsertDocument, InsertDocumentChunk, InsertSystemPrompt, InsertSection, InsertProduct, InsertDocumentAnnotation, InsertProductGroup, InsertProductItem, InsertManualRegion } from "../drizzle/schema";
 import type { DocumentType } from "./rag/types";
+import fs from "fs";
+import path from "path";
 
 /**
  * Database operations for documents and RAG system
@@ -294,6 +296,93 @@ export async function updateDocumentDownloadFilename(
       updatedAt: new Date(),
     } as any)
     .where(eq(documents.id, documentId));
+}
+
+export async function getDocumentBySourceUrl(sourceUrl: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const rows = await db
+    .select()
+    .from(documents)
+    .where(eq(documents.sourceUrl, sourceUrl))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function listDocumentsBySourceDocTypes(
+  docTypes: Array<"certificate" | "passport">
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  return await db
+    .select()
+    .from(documents)
+    .where(
+      and(
+        inArray(documents.docType, docTypes),
+        sql`${documents.sourceUrl} IS NOT NULL`
+      )
+    );
+}
+
+export async function updateDocumentSyncRecord(
+  documentId: number,
+  fields: {
+    title?: string | null;
+    filename?: string;
+    fileSize?: number;
+    contentHash?: string | null;
+    sourceSyncedAt?: Date | null;
+    syncSourceId?: number | null;
+    docType?: "certificate" | "passport";
+    processingType?: "certificate" | "passport";
+    status?: "processing" | "indexed" | "failed";
+    errorMessage?: string | null;
+    processingMessage?: string | null;
+  }
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const updates: Record<string, unknown> = {
+    updatedAt: new Date(),
+  };
+  if (fields.title !== undefined) updates.title = fields.title;
+  if (fields.filename !== undefined) updates.filename = fields.filename;
+  if (fields.fileSize !== undefined) updates.fileSize = fields.fileSize;
+  if (fields.contentHash !== undefined) updates.contentHash = fields.contentHash;
+  if (fields.sourceSyncedAt !== undefined) updates.sourceSyncedAt = fields.sourceSyncedAt;
+  if (fields.syncSourceId !== undefined) updates.syncSourceId = fields.syncSourceId;
+  if (fields.docType !== undefined) updates.docType = fields.docType;
+  if (fields.processingType !== undefined) updates.processingType = fields.processingType;
+  if (fields.status !== undefined) {
+    updates.status = fields.status;
+    if (fields.status === "indexed") {
+      updates.processingStage = "completed";
+      updates.processingProgress = 100;
+    }
+    if (fields.status === "failed") {
+      updates.processingStage = "failed";
+      updates.processingProgress = 100;
+    }
+  }
+  if (fields.errorMessage !== undefined) updates.errorMessage = fields.errorMessage;
+  if (fields.processingMessage !== undefined) {
+    updates.processingMessage = fields.processingMessage;
+  }
+
+  await db.update(documents).set(updates as any).where(eq(documents.id, documentId));
+}
+
+export async function listDocumentsBySyncSourceId(syncSourceId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return await db
+    .select()
+    .from(documents)
+    .where(eq(documents.syncSourceId, syncSourceId));
 }
 
 export async function getDocTypeAvailability(
@@ -941,19 +1030,51 @@ export async function deleteDocument(documentId: number): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  // Delete all related data in correct order (to avoid foreign key constraints)
-  // 1. Delete chunks (referenced by documentId)
-  //    This also deletes embeddings stored in document_chunks.embedding field
+  // Delete all related data (no DB FKs, but keep cleanup complete)
+  await db.delete(manualRegions).where(eq(manualRegions.documentId, documentId));
+  await db.delete(documentAnnotations).where(eq(documentAnnotations.documentId, documentId));
+  await db.delete(productItems).where(eq(productItems.documentId, documentId));
+  await db.delete(productGroups).where(eq(productGroups.documentId, documentId));
   await db.delete(documentChunks).where(eq(documentChunks.documentId, documentId));
-  
-  // 2. Delete sections (referenced by documentId)
   await db.delete(sections).where(eq(sections.documentId, documentId));
-  
-  // 3. Delete products (referenced by documentId)
   await db.delete(products).where(eq(products.documentId, documentId));
-
-  // 4. Finally delete the document itself
   await db.delete(documents).where(eq(documents.id, documentId));
+}
+
+/**
+ * Remove files for a document from uploads/documents ({id}_* and companion).
+ */
+export function removeDocumentUploadFiles(
+  documentId: number,
+  filename?: string | null
+): void {
+  const uploadsDir = path.join(process.cwd(), "uploads", "documents");
+  if (!fs.existsSync(uploadsDir)) return;
+
+  if (filename) {
+    for (const suffix of [`${documentId}_${filename}`, `${documentId}_download_${filename}`]) {
+      const p = path.resolve(uploadsDir, suffix);
+      try {
+        if (fs.existsSync(p)) fs.unlinkSync(p);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  try {
+    for (const name of fs.readdirSync(uploadsDir)) {
+      if (name.startsWith(`${documentId}_`)) {
+        try {
+          fs.unlinkSync(path.join(uploadsDir, name));
+        } catch {
+          // ignore
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
 }
 
 /**

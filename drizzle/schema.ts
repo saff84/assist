@@ -9,6 +9,7 @@ import {
   longtext,
   boolean,
   index,
+  uniqueIndex,
   json
 } from "drizzle-orm/mysql-core";
 
@@ -75,6 +76,13 @@ export const documents = mysqlTable(
     title: varchar("title", { length: 512 }),
     /** Optional PDF (or other) file offered for download when answering from this knowledge doc (e.g. MD instruction + PDF). */
     downloadFilename: varchar("downloadFilename", { length: 255 }),
+    /** Canonical PDF URL on sanext.ru (sync from knowledge base pages). */
+    sourceUrl: varchar("sourceUrl", { length: 1024 }),
+    /** SHA-256 of file bytes for sync change detection. */
+    contentHash: varchar("contentHash", { length: 64 }),
+    sourceSyncedAt: timestamp("sourceSyncedAt"),
+    /** knowledge_sync_sources.id when imported via page sync */
+    syncSourceId: int("syncSourceId"),
     year: int("year"),
     pages: int("pages"),
     processingStage: mysqlEnum("processingStage", ["queued", "parsing", "chunking", "embedding", "saving", "completed", "failed"]).default("queued").notNull(),
@@ -102,6 +110,8 @@ export const documents = mysqlTable(
   (table) => ({
     uploadedByIdx: index("uploadedBy_idx").on(table.uploadedBy),
     statusIdx: index("status_idx").on(table.status),
+    sourceUrlIdx: uniqueIndex("documents_sourceUrl_uidx").on(table.sourceUrl),
+    syncSourceIdx: index("documents_syncSource_idx").on(table.syncSourceId),
   })
 );
 
@@ -529,3 +539,39 @@ export const llmSettings = mysqlTable(
 
 export type LlmSettings = typeof llmSettings.$inferSelect;
 export type InsertLlmSettings = typeof llmSettings.$inferInsert;
+
+/**
+ * Configurable pages to scrape for certificates / passports
+ */
+export const knowledgeSyncSources = mysqlTable(
+  "knowledge_sync_sources",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    name: varchar("name", { length: 255 }).notNull(),
+    pageUrl: varchar("pageUrl", { length: 1024 }).notNull(),
+    docType: mysqlEnum("docType", ["certificate", "passport"]).notNull(),
+    enabled: boolean("enabled").default(true).notNull(),
+    /** Href must contain this substring (e.g. /upload/) */
+    hrefMustContain: varchar("hrefMustContain", { length: 255 }).default("/upload/").notNull(),
+    /** File extension filter, e.g. .pdf */
+    fileExtension: varchar("fileExtension", { length: 32 }).default(".pdf").notNull(),
+    /** Where to take document title from */
+    titleSource: mysqlEnum("titleSource", ["link_text", "filename"])
+      .default("link_text")
+      .notNull(),
+    /** Strip this prefix from link text titles (case-insensitive), e.g. "pdf " */
+    titleStripPrefix: varchar("titleStripPrefix", { length: 64 }).default("pdf"),
+    /** Optional: only links whose visible text contains this */
+    linkTextMustContain: varchar("linkTextMustContain", { length: 255 }),
+    lastSyncedAt: timestamp("lastSyncedAt"),
+    lastSyncMessage: varchar("lastSyncMessage", { length: 512 }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => ({
+    docTypeIdx: index("knowledge_sync_sources_docType_idx").on(table.docType),
+  })
+);
+
+export type KnowledgeSyncSource = typeof knowledgeSyncSources.$inferSelect;
+export type InsertKnowledgeSyncSource = typeof knowledgeSyncSources.$inferInsert;

@@ -160,6 +160,10 @@ export async function initializeDatabase() {
         docType ENUM('catalog', 'instruction', 'general', 'certificate', 'passport', 'warranty_faq', 'company') NOT NULL DEFAULT 'general',
         title VARCHAR(512),
         downloadFilename VARCHAR(255),
+        sourceUrl VARCHAR(1024),
+        contentHash VARCHAR(64),
+        sourceSyncedAt TIMESTAMP NULL,
+        syncSourceId INT,
         year INT,
         pages INT,
         processingStage ENUM('queued','parsing','chunking','embedding','saving','completed','failed') NOT NULL DEFAULT 'queued',
@@ -170,7 +174,9 @@ export async function initializeDatabase() {
         createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX uploadedBy_idx (uploadedBy),
-        INDEX status_idx (status)
+        INDEX status_idx (status),
+        UNIQUE KEY documents_sourceUrl_uidx (sourceUrl),
+        INDEX documents_syncSource_idx (syncSourceId)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `,
       `
@@ -386,7 +392,13 @@ export async function initializeDatabase() {
       `ALTER TABLE documents MODIFY COLUMN processingStage ENUM('queued','parsing','chunking','embedding','saving','completed','failed') NOT NULL DEFAULT 'queued';`,
       `ALTER TABLE documents ADD COLUMN title VARCHAR(512);`,
       `ALTER TABLE documents ADD COLUMN downloadFilename VARCHAR(255);`,
+      `ALTER TABLE documents ADD COLUMN sourceUrl VARCHAR(1024);`,
+      `ALTER TABLE documents ADD COLUMN contentHash VARCHAR(64);`,
+      `ALTER TABLE documents ADD COLUMN sourceSyncedAt TIMESTAMP NULL;`,
+      `ALTER TABLE documents ADD COLUMN syncSourceId INT;`,
       `ALTER TABLE documents ADD COLUMN year INT;`,
+      `CREATE UNIQUE INDEX documents_sourceUrl_uidx ON documents (sourceUrl);`,
+      `CREATE INDEX documents_syncSource_idx ON documents (syncSourceId);`,
       `ALTER TABLE documents ADD COLUMN pages INT;`,
       `ALTER TABLE documents ADD COLUMN processingProgress INT NOT NULL DEFAULT 0;`,
       `ALTER TABLE documents ADD COLUMN processingMessage LONGTEXT;`,
@@ -451,6 +463,30 @@ export async function initializeDatabase() {
         lastSeenAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         UNIQUE KEY widget_sites_origin_unique (origin)
       )`,
+      `CREATE TABLE IF NOT EXISTS knowledge_sync_sources (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        pageUrl VARCHAR(1024) NOT NULL,
+        docType ENUM('certificate','passport') NOT NULL,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        hrefMustContain VARCHAR(255) NOT NULL DEFAULT '/upload/',
+        fileExtension VARCHAR(32) NOT NULL DEFAULT '.pdf',
+        titleSource ENUM('link_text','filename') NOT NULL DEFAULT 'link_text',
+        titleStripPrefix VARCHAR(64) DEFAULT 'pdf',
+        linkTextMustContain VARCHAR(255),
+        lastSyncedAt TIMESTAMP NULL,
+        lastSyncMessage VARCHAR(512),
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX knowledge_sync_sources_docType_idx (docType)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+      // Always ensure sync columns exist (production uses migrations-only bootstrap)
+      `ALTER TABLE documents ADD COLUMN sourceUrl VARCHAR(1024)`,
+      `ALTER TABLE documents ADD COLUMN contentHash VARCHAR(64)`,
+      `ALTER TABLE documents ADD COLUMN sourceSyncedAt TIMESTAMP NULL`,
+      `ALTER TABLE documents ADD COLUMN syncSourceId INT`,
+      `CREATE UNIQUE INDEX documents_sourceUrl_uidx ON documents (sourceUrl)`,
+      `CREATE INDEX documents_syncSource_idx ON documents (syncSourceId)`,
     ]);
 
     // Critical compatibility guardrails:

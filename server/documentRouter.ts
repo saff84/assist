@@ -1,4 +1,4 @@
-﻿import { router, publicProcedure, protectedProcedure } from "./_core/trpc";
+﻿import { router, publicProcedure, protectedProcedure, knowledgeProcedure } from "./_core/trpc";
 import { z } from "zod";
 import * as documentDb from "./documentDb";
 import * as documentProcessor from "./documentProcessor";
@@ -15,6 +15,11 @@ import {
 import { generateChunksFromManualProductItems } from "./manualChunkGenerator";
 import { getSystemPromptTemplate } from "./rag/promptLoader";
 import { canManageKnowledgeBase, isAdmin } from "./_core/roles";
+import {
+  getSanextSyncStatus,
+  runSanextKnowledgeSync,
+} from "./sanextKnowledgeSync";
+import * as syncSourcesDb from "./knowledgeSyncSourcesDb";
 
 /**
  * Document management and RAG tRPC router
@@ -178,6 +183,10 @@ export const documentRouter = router({
           });
         }
 
+        documentDb.removeDocumentUploadFiles(doc.id, doc.filename);
+        if (doc.downloadFilename) {
+          documentDb.removeDocumentUploadFiles(doc.id, doc.downloadFilename);
+        }
         await documentDb.deleteDocument(input.id);
 
         return { success: true, message: "Document deleted successfully" };
@@ -1540,5 +1549,147 @@ export const documentRouter = router({
               : "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ FAQ-С‡Р°РЅРєРё",
         });
       }
+    }),
+
+  /**
+   * Sync certificates & passports from configured knowledge pages
+   */
+  getSanextSyncStatus: knowledgeProcedure.query(() => {
+    return getSanextSyncStatus();
+  }),
+
+  runSanextSync: knowledgeProcedure
+    .input(z.object({ sourceId: z.number().optional() }).optional())
+    .mutation(async ({ input }) => {
+      try {
+        const result = await runSanextKnowledgeSync({
+          sourceId: input?.sourceId,
+        });
+        return result;
+      } catch (error) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Не удалось выполнить синхронизацию с sanext.ru",
+        });
+      }
+    }),
+
+  listKnowledgeSyncSources: knowledgeProcedure.query(async () => {
+    await syncSourcesDb.ensureDefaultKnowledgeSyncSources();
+    const sources = await syncSourcesDb.listKnowledgeSyncSources();
+    const counts = await syncSourcesDb.countDocumentsForSyncSources(
+      sources.map((s) => s.id)
+    );
+    return sources.map((s) => ({
+      ...s,
+      documentsCount: counts[s.id] ?? 0,
+    }));
+  }),
+
+  getKnowledgeSyncSourceDocuments: knowledgeProcedure
+    .input(z.object({ sourceId: z.number() }))
+    .query(async ({ input }) => {
+      return await syncSourcesDb.listDocumentsForSyncSource(input.sourceId);
+    }),
+
+  createKnowledgeSyncSource: knowledgeProcedure
+    .input(
+      z.object({
+        name: z.string().min(1).max(255),
+        pageUrl: z.string().url().max(1024),
+        docType: z.enum(["certificate", "passport"]),
+        enabled: z.boolean().optional(),
+        hrefMustContain: z.string().max(255).optional(),
+        fileExtension: z.string().max(32).optional(),
+        titleSource: z.enum(["link_text", "filename"]).optional(),
+        titleStripPrefix: z.string().max(64).nullable().optional(),
+        linkTextMustContain: z.string().max(255).nullable().optional(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const id = await syncSourcesDb.createKnowledgeSyncSource({
+        name: input.name.trim(),
+        pageUrl: input.pageUrl.trim(),
+        docType: input.docType,
+        enabled: input.enabled ?? true,
+        hrefMustContain: input.hrefMustContain?.trim() || "/upload/",
+        fileExtension: input.fileExtension?.trim() || ".pdf",
+        titleSource: input.titleSource ?? "link_text",
+        titleStripPrefix:
+          input.titleStripPrefix === undefined
+            ? "pdf"
+            : input.titleStripPrefix,
+        linkTextMustContain: input.linkTextMustContain ?? null,
+      });
+      return { id };
+    }),
+
+  updateKnowledgeSyncSource: knowledgeProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        name: z.string().min(1).max(255).optional(),
+        pageUrl: z.string().url().max(1024).optional(),
+        docType: z.enum(["certificate", "passport"]).optional(),
+        enabled: z.boolean().optional(),
+        hrefMustContain: z.string().max(255).optional(),
+        fileExtension: z.string().max(32).optional(),
+        titleSource: z.enum(["link_text", "filename"]).optional(),
+        titleStripPrefix: z.string().max(64).nullable().optional(),
+        linkTextMustContain: z.string().max(255).nullable().optional(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      if (getSanextSyncStatus().inProgress) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "Дождитесь окончания синхронизации, затем измените источник",
+        });
+      }
+      const { id, ...rest } = input;
+      const existing = await syncSourcesDb.getKnowledgeSyncSourceById(id);
+      if (!existing) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Источник не найден" });
+      }
+      const patch: Record<string, unknown> = {};
+      if (rest.name !== undefined) patch.name = rest.name.trim();
+      if (rest.pageUrl !== undefined) patch.pageUrl = rest.pageUrl.trim();
+      if (rest.docType !== undefined) patch.docType = rest.docType;
+      if (rest.enabled !== undefined) patch.enabled = rest.enabled;
+      if (rest.hrefMustContain !== undefined) {
+        patch.hrefMustContain = rest.hrefMustContain.trim() || "/upload/";
+      }
+      if (rest.fileExtension !== undefined) {
+        patch.fileExtension = rest.fileExtension.trim() || ".pdf";
+      }
+      if (rest.titleSource !== undefined) patch.titleSource = rest.titleSource;
+      if (rest.titleStripPrefix !== undefined) {
+        patch.titleStripPrefix = rest.titleStripPrefix;
+      }
+      if (rest.linkTextMustContain !== undefined) {
+        patch.linkTextMustContain = rest.linkTextMustContain;
+      }
+      await syncSourcesDb.updateKnowledgeSyncSource(id, patch as any);
+      return { ok: true };
+    }),
+
+  deleteKnowledgeSyncSource: knowledgeProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      if (getSanextSyncStatus().inProgress) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "Дождитесь окончания синхронизации, затем удалите источник",
+        });
+      }
+      const existing = await syncSourcesDb.getKnowledgeSyncSourceById(input.id);
+      if (!existing) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Источник не найден" });
+      }
+      const result = await syncSourcesDb.deleteKnowledgeSyncSource(input.id);
+      return { ok: true, ...result };
     }),
 });

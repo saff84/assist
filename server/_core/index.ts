@@ -13,6 +13,7 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { initializeDatabase } from "../initDatabase";
 import { widgetCorsMiddleware } from "./widgetCors";
+import { startSanextKnowledgeSyncScheduler } from "../sanextKnowledgeSync";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -90,6 +91,7 @@ async function startServer() {
 
   server.listen(port, "0.0.0.0", () => {
     console.log(`Server running on 0.0.0.0:${port}`);
+    startSanextKnowledgeSyncScheduler();
   });
 }
 

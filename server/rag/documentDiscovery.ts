@@ -56,8 +56,12 @@ function scoreQueryToText(queryTokens: string[], queryNormalized: string, text: 
 
   let score = 0;
   for (const token of queryTokens) {
-    if (token.length < 3) continue;
-    if (hay.includes(token)) score += 2;
+    if (token.length < 2) continue;
+    if (hay.includes(token)) {
+      // Prefer longer / alphanumeric model tokens
+      score += token.length >= 4 ? 3 : 2;
+      if (/[a-z]/i.test(token) && /\d/.test(token)) score += 2;
+    }
   }
   if (hay.includes(queryNormalized)) score += 4;
 
@@ -79,6 +83,12 @@ export async function findBestDocumentsByTitle(
 
   const queryNormalized = query.trim().toLowerCase();
   const queryTokens = tokenize(queryNormalized, stopwords);
+  // Keep short model/SKU-like tokens (STP, CM-1, 1181)
+  const extraTokens = queryNormalized
+    .split(/[^a-z0-9а-яё]+/i)
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => t.length >= 2 && !stopwords.has(t));
+  const allTokens = Array.from(new Set([...queryTokens, ...extraTokens]));
 
   const candidates = await db
     .select({
@@ -93,13 +103,13 @@ export async function findBestDocumentsByTitle(
     .from(documents)
     .where(sql`${documents.status} = 'indexed' AND ${documents.docType} = ${docType}`)
     .orderBy(desc(documents.createdAt))
-    .limit(50);
+    .limit(500);
 
   return candidates
     .map((d) => {
       const title = d.title ?? "";
       const name = `${title} ${d.filename}`.trim();
-      const score = scoreQueryToText(queryTokens, queryNormalized, name);
+      const score = scoreQueryToText(allTokens, queryNormalized, name);
       return { doc: d as BasicDocumentHit, score };
     })
     .filter((x) => x.score > 0)

@@ -17,6 +17,7 @@ import UsersPage from "./pages/UsersPage";
 import FaqChunksPage from "./pages/FaqChunksPage";
 import LlmSettingsPage from "./pages/LlmSettingsPage";
 import CompanyPage from "./pages/CompanyPage";
+import KnowledgeSyncPage from "./pages/KnowledgeSyncPage";
 import LoginPage from "./pages/LoginPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import WidgetPage from "./pages/WidgetPage";
@@ -115,6 +116,13 @@ function Router() {
         <AuthGate>
           <DashboardLayout>
             <CompanyPage />
+          </DashboardLayout>
+        </AuthGate>
+      </Route>
+      <Route path="/knowledge-sync">
+        <AuthGate>
+          <DashboardLayout>
+            <KnowledgeSyncPage />
           </DashboardLayout>
         </AuthGate>
       </Route>

@@ -31,6 +31,7 @@ export default function DocumentsPage() {
   const [productTitle, setProductTitle] = useState("");
   const [productSku, setProductSku] = useState("");
   const [companionPdf, setCompanionPdf] = useState<File | null>(null);
+  const [certPassportTitle, setCertPassportTitle] = useState("");
   const [shouldPoll, setShouldPoll] = useState(false);
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<string>("all");
@@ -224,7 +225,15 @@ export default function DocumentsPage() {
 
     await uploadFile(file, processingType, {
       companionPdf: companionPdf ?? undefined,
+      title:
+        processingType === "certificate" || processingType === "passport"
+          ? certPassportTitle.trim() ||
+            file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ")
+          : undefined,
     });
+    if (processingType === "certificate" || processingType === "passport") {
+      setCertPassportTitle("");
+    }
   };
 
   const uploadFile = async (
@@ -300,9 +309,20 @@ export default function DocumentsPage() {
         refetch();
       }
 
-      // For specialized/manual flows, jump straight to annotation
-      if (shouldRedirect && skipFullProcessing && result?.documentId) {
+      // Manual markup flows (except certificate/passport — file search by title)
+      const needsAnnotate =
+        skipFullProcessing &&
+        type !== "certificate" &&
+        type !== "passport";
+      if (shouldRedirect && needsAnnotate && result?.documentId) {
         setLocation(`/documents/${result.documentId}/annotate`);
+      } else if (
+        shouldRedirect &&
+        (type === "certificate" || type === "passport")
+      ) {
+        toast.success(
+          "Файл готов к поиску по названию в чате (тема Сертификаты / Паспорта)"
+        );
       }
       return typeof result?.documentId === "number" ? result.documentId : null;
     } catch (error) {
@@ -360,8 +380,8 @@ export default function DocumentsPage() {
     return {
       catalog: { title: "Каталоги", icon: ShoppingCart, hint: "Номенклатура и товары" },
       instruction: { title: "Инструкции", icon: BookOpen, hint: "Руководства и инструкции" },
-      passport: { title: "Паспорта", icon: FileText, hint: "Паспорта изделий (ручная разметка)" },
-      certificate: { title: "Сертификаты", icon: Eye, hint: "Сертификаты (ручная разметка / файл)" },
+      passport: { title: "Паспорта", icon: FileText, hint: "Поиск файла по названию (синхронизация / загрузка)" },
+      certificate: { title: "Сертификаты", icon: Eye, hint: "Поиск файла по названию (синхронизация / загрузка)" },
       warranty_faq: { title: "FAQ по гарантии", icon: Grid3x3, hint: "Вопрос–ответ по гарантийным обращениям" },
       general: { title: "Общие документы", icon: FileText, hint: "Прочие документы" },
     } as const;
@@ -567,7 +587,16 @@ export default function DocumentsPage() {
           <h1 className="text-3xl font-bold">Documents</h1>
           <p className="text-muted-foreground">Manage your knowledge base documents</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap justify-end">
+          <Button
+            onClick={() => setLocation("/knowledge-sync")}
+            variant="outline"
+            className="gap-2"
+            title="Страницы парсинга сертификатов и паспортов"
+          >
+            <Download className="w-4 h-4" />
+            Синхронизация с сайта
+          </Button>
           <Button 
             onClick={() => regenerateAllMutation.mutate()} 
             disabled={regenerateAllMutation.isPending}
@@ -658,8 +687,8 @@ export default function DocumentsPage() {
                   { value: "instruction" as const, label: "Инструкция", icon: BookOpen, group: "Авто" },
                   { value: "catalog" as const, label: "Каталог", icon: ShoppingCart, group: "Авто" },
                   { value: "catalog_single" as const, label: "1 товар", icon: Package, group: "Ручной" },
-                  { value: "certificate" as const, label: "Сертификат", icon: Eye, group: "Ручной" },
-                  { value: "passport" as const, label: "Паспорт", icon: FileText, group: "Ручной" },
+                  { value: "certificate" as const, label: "Сертификат", icon: Eye, group: "Файл" },
+                  { value: "passport" as const, label: "Паспорт", icon: FileText, group: "Файл" },
                   { value: "warranty_faq" as const, label: "FAQ гарантия", icon: Grid3x3, group: "Ручной" },
                   { value: "manual" as const, label: "Ручной", icon: Tag, group: "Ручной" },
                 ].map((opt) => {
@@ -689,7 +718,27 @@ export default function DocumentsPage() {
               <p className="text-xs text-muted-foreground">
                 «Каталог» — авторазбор большого PDF/MD. «1 товар» — карточка товара (группа SKU):
                 PDF → ручная разметка; MD → SKU и характеристики из строк таблиц с колонкой «Артикул».
+                Сертификаты/паспорта — поиск файла по названию (синхронизация с sanext.ru или ручная загрузка).
               </p>
+              {(processingType === "certificate" || processingType === "passport") && (
+                <div className="space-y-1.5 pt-1">
+                  <Label htmlFor="cert-passport-title">Название для поиска</Label>
+                  <Input
+                    id="cert-passport-title"
+                    value={certPassportTitle}
+                    onChange={(e) => setCertPassportTitle(e.target.value)}
+                    placeholder={
+                      processingType === "passport"
+                        ? "Напр. Паспорт труба SANEXT Стабил"
+                        : "Напр. Сертификат соответствия…"
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    По этому названию ассистент найдёт файл в чате. Если пусто — возьмём имя файла.
+                    Разметка не нужна. Настройка страниц и синхронизация — в разделе «Синхронизация».
+                  </p>
+                </div>
+              )}
               {processingType === "catalog_single" && (
                 <div className="grid gap-3 sm:grid-cols-2 pt-1">
                   <div className="space-y-1.5">

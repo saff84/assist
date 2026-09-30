@@ -3404,6 +3404,49 @@ export async function processRAGQuery(
     return processCompanyKnowledgeQuery(ragQuery, config, start);
   }
 
+  // Certificates & passports: file search by title → preview + download (no chunk RAG)
+  if (forcedDocType === "certificate" || forcedDocType === "passport") {
+    const stopwords = createStopwordSet(config.retrieval.stopwords.extra ?? []);
+    const hits = await findBestDocumentsByTitle(
+      ragQuery.query,
+      forcedDocType,
+      stopwords,
+      3
+    );
+
+    if (hits.length > 0) {
+      const kind = forcedDocType === "certificate" ? "сертификат" : "паспорт";
+      const kindGenitive =
+        forcedDocType === "certificate" ? "сертификатов" : "паспортов";
+      const top = hits[0];
+      const title = top.title?.trim() || top.filename;
+      const response =
+        hits.length === 1
+          ? `Нашёл ${kind}: **${title}**.\n\nНиже — файл для просмотра/скачивания.`
+          : `Нашёл несколько подходящих ${kindGenitive}. Уточните, пожалуйста, какой нужен:\n\n${hits
+              .map((d, idx) => `- ${idx + 1}) ${d.title?.trim() || d.filename}`)
+              .join("\n")}\n\nНиже приложил самые близкие варианты.`;
+
+      return {
+        response,
+        sources: [],
+        attachments: hits.map(buildDocumentAttachment),
+        responseTime: Date.now() - start,
+        tokensUsed: Math.ceil(response.length / TOKEN_CHAR_RATIO),
+      };
+    }
+
+    const clarification = `В базе знаний нет документов по теме "${docTypeLabel(
+      forcedDocType
+    )}", подходящих под ваш запрос. Попробуйте уточнить название изделия или артикул.`;
+    return {
+      response: clarification,
+      sources: [],
+      responseTime: Date.now() - start,
+      tokensUsed: Math.ceil(clarification.length / TOKEN_CHAR_RATIO),
+    };
+  }
+
   const retrieval = await retrieveAndScoreChunks(
     ragQuery.query,
     config,
@@ -3477,38 +3520,6 @@ export async function processRAGQuery(
   if (forcedDocType) {
     typeFiltered = filtered.filter((chunk) => chunk.docType === forcedDocType);
     if (!typeFiltered.length) {
-      // Certificates can be scanned PDFs without extractable text (0 chunks).
-      // In that case, we still can answer by returning the certificate file
-      // and selecting it by title/filename.
-      if (forcedDocType === "certificate") {
-        const stopwords = createStopwordSet(config.retrieval.stopwords.extra ?? []);
-        const hits = await findBestDocumentsByTitle(
-          ragQuery.query,
-          "certificate",
-          stopwords,
-          3
-        );
-
-        if (hits.length > 0) {
-          const top = hits[0];
-          const title = top.title?.trim() || top.filename;
-          const response =
-            hits.length === 1
-              ? `Нашёл сертификат: **${title}**.\n\nНиже — файл для просмотра/скачивания.`
-              : `Нашёл несколько подходящих сертификатов. Уточните, пожалуйста, какой нужен:\n\n${hits
-                  .map((d, idx) => `- ${idx + 1}) ${d.title?.trim() || d.filename}`)
-                  .join("\n")}\n\nНиже приложил самые близкие варианты.`;
-
-          return {
-            response,
-            sources: [],
-            attachments: hits.map(buildDocumentAttachment),
-            responseTime: Date.now() - start,
-            tokensUsed: Math.ceil(response.length / TOKEN_CHAR_RATIO),
-          };
-        }
-      }
-
       const clarification = `В базе знаний нет документов по теме "${docTypeLabel(
         forcedDocType
       )}", чтобы ответить на ваш вопрос. Попробуйте выбрать другую тематику или загрузить соответствующие документы.`;
