@@ -1,8 +1,3 @@
--- Fields for syncing certificates/passports from sanext.ru knowledge base pages
-ALTER TABLE `documents` ADD COLUMN `sourceUrl` VARCHAR(1024);
---> statement-breakpoint
-ALTER TABLE `documents` ADD COLUMN `contentHash` VARCHAR(64);
---> statement-breakpoint
-ALTER TABLE `documents` ADD COLUMN `sourceSyncedAt` TIMESTAMP NULL;
---> statement-breakpoint
-CREATE UNIQUE INDEX `documents_sourceUrl_uidx` ON `documents` (`sourceUrl`);
+-- Columns may already exist via initDatabase always-on ALTER (production).
+-- Keep this migration as a no-op so drizzle journal advances without ER_DUP_FIELDNAME.
+SELECT 1 AS `migration_0022_document_source_sync_applied`;
