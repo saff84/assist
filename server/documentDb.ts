@@ -91,6 +91,7 @@ export async function updateDocumentMetadata(
       | "certificate"
       | "passport"
       | "warranty_faq"
+      | "installation"
       | "company";
   }
 ): Promise<void> {
@@ -398,6 +399,7 @@ export async function getDocTypeAvailability(
     certificate: false,
     passport: false,
     warranty_faq: false,
+    installation: false,
     company: false,
   };
 

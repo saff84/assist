@@ -328,6 +328,7 @@ export const documentRouter = router({
             "certificate",
             "passport",
             "warranty_faq",
+            "installation",
             "company",
           ] satisfies ReadonlyArray<DocumentType>)
           .optional(),
@@ -384,6 +385,7 @@ export const documentRouter = router({
         "certificate",
         "passport",
         "warranty_faq",
+        "installation",
       ]);
 
       const hasFaqChunks = await faqDb.hasAnyFaqEntries().catch(() => false);
@@ -392,6 +394,7 @@ export const documentRouter = router({
         hasCertificates: availability.certificate,
         hasPassports: availability.passport,
         hasWarrantyFaq: availability.warranty_faq || hasFaqChunks,
+        hasInstallation: availability.installation,
       };
     } catch (error) {
       console.error("Error getting available chat topics:", error);
@@ -401,6 +404,7 @@ export const documentRouter = router({
         hasCertificates: false,
         hasPassports: false,
         hasWarrantyFaq: false,
+        hasInstallation: false,
       };
     }
   }),

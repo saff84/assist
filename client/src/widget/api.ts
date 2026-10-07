@@ -5,6 +5,7 @@ export type WidgetDocumentType =
   | "certificate"
   | "passport"
   | "warranty_faq"
+  | "installation"
   | "company";
 
 export type WidgetAttachment = {
@@ -23,6 +24,7 @@ export type WidgetTopics = {
   hasCertificates: boolean;
   hasPassports: boolean;
   hasWarrantyFaq: boolean;
+  hasInstallation: boolean;
 };
 
 export type WidgetSource = {
@@ -39,6 +41,7 @@ export type WidgetSuggestedTopic =
   | "instructions"
   | "certificates"
   | "passports"
+  | "installation"
   | "warranty";
 
 export type WidgetChatResponse = {

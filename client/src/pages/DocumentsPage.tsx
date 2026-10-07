@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Loader2, Trash2, Upload, AlertCircle, CheckCircle2, Clock, FileText, ShoppingCart, BookOpen, Eye, Tag, Grid3x3, RefreshCw, Download, Package } from "lucide-react";
+import { Loader2, Trash2, Upload, AlertCircle, CheckCircle2, Clock, FileText, ShoppingCart, BookOpen, Eye, Tag, Grid3x3, RefreshCw, Download, Package, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -22,6 +22,7 @@ type ProcessingType =
   | "certificate"
   | "passport"
   | "warranty_faq"
+  | "installation"
   | "manual";
 
 export default function DocumentsPage() {
@@ -213,6 +214,16 @@ export default function DocumentsPage() {
     const file = selected[0];
     const fileExt = "." + file.name.split(".").pop()?.toLowerCase();
 
+    if (
+      processingType === "installation" &&
+      fileExt !== ".md" &&
+      fileExt !== ".markdown"
+    ) {
+      toast.error("Для темы «Монтаж и совместимость» загрузите файл Markdown (.md)");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+
     if (!supportedFormats.includes(fileExt)) {
       toast.error(`Unsupported file format. Supported: ${supportedFormats.join(", ")}`);
       return;
@@ -380,6 +391,11 @@ export default function DocumentsPage() {
     return {
       catalog: { title: "Каталоги", icon: ShoppingCart, hint: "Номенклатура и товары" },
       instruction: { title: "Инструкции", icon: BookOpen, hint: "Руководства и инструкции" },
+      installation: {
+        title: "Монтаж и совместимость",
+        icon: Wrench,
+        hint: "Markdown: монтаж, ошибки и совместимость линеек",
+      },
       passport: { title: "Паспорта", icon: FileText, hint: "Поиск файла по названию (синхронизация / загрузка)" },
       certificate: { title: "Сертификаты", icon: Eye, hint: "Поиск файла по названию (синхронизация / загрузка)" },
       warranty_faq: { title: "FAQ по гарантии", icon: Grid3x3, hint: "Вопрос–ответ по гарантийным обращениям" },
@@ -409,6 +425,7 @@ export default function DocumentsPage() {
     const order = [
       "catalog",
       "instruction",
+      "installation",
       "passport",
       "certificate",
       "warranty_faq",
@@ -450,6 +467,7 @@ export default function DocumentsPage() {
       { value: "warranty_faq", label: "FAQ гарантия", count: counts.warranty_faq ?? 0 },
       { value: "catalog", label: "Каталоги", count: counts.catalog ?? 0 },
       { value: "instruction", label: "Инструкции", count: counts.instruction ?? 0 },
+      { value: "installation", label: "Монтаж", count: counts.installation ?? 0 },
       { value: "general", label: "Общие", count: counts.general ?? 0 },
     ].filter((t) => t.value === "all" || t.count > 0);
   }, [filteredDocuments.length, groupedDocuments]);
@@ -685,6 +703,12 @@ export default function DocumentsPage() {
                 {[
                   { value: "general" as const, label: "Общий", icon: FileText, group: "Авто" },
                   { value: "instruction" as const, label: "Инструкция", icon: BookOpen, group: "Авто" },
+                  {
+                    value: "installation" as const,
+                    label: "Монтаж и совместимость",
+                    icon: Wrench,
+                    group: "MD",
+                  },
                   { value: "catalog" as const, label: "Каталог", icon: ShoppingCart, group: "Авто" },
                   { value: "catalog_single" as const, label: "1 товар", icon: Package, group: "Ручной" },
                   { value: "certificate" as const, label: "Сертификат", icon: Eye, group: "Файл" },
@@ -853,6 +877,73 @@ export default function DocumentsPage() {
                   </div>
                 </details>
               )}
+              {processingType === "installation" && (
+                <div className="rounded-lg border bg-muted/40 p-3 text-sm space-y-3">
+                  <p className="font-medium">
+                    Как оформить Markdown «Монтаж и совместимость оборудования»
+                  </p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Один файл — свод по монтажу и совместимости линеек. Поиск в чате идёт по
+                    заголовкам разделов. Загружается только <code>.md</code>. PDF пособия можно
+                    приложить отдельно: его получит пользователь, а ответ строится по Markdown.
+                  </p>
+                  <ul className="list-disc list-inside space-y-1.5 text-xs text-muted-foreground leading-relaxed">
+                    <li>
+                      <strong className="text-foreground"># Заголовок</strong> — название документа.
+                    </li>
+                    <li>
+                      Короткое введение: откуда сведения, на какое издание опираться и что сверять
+                      с паспортом изделия.
+                    </li>
+                    <li>
+                      <strong className="text-foreground">## Содержание</strong> — нумерованный
+                      список крупных тем.
+                    </li>
+                    <li>
+                      <strong className="text-foreground">## 1. Раздел</strong> — оборудование или
+                      этап (трубы, тёплый пол, коллекторы и т.д.).
+                    </li>
+                    <li>
+                      <strong className="text-foreground">### Подраздел</strong> — одна тема поиска:
+                      совместимость линейки, порядок сборки, ошибка монтажа.
+                    </li>
+                    <li>
+                      Таблицы совместимости — GFM: строка заголовков и{" "}
+                      <code>| --- | --- |</code>. Например колонки «Линейка», «Назначение»,
+                      «Барьер», «Соединения» или «Артикул», «Изделие».
+                    </li>
+                    <li>
+                      В тексте подраздела выделяйте{" "}
+                      <strong className="text-foreground">Чего следует избегать</strong>,{" "}
+                      <strong className="text-foreground">Проверка</strong>,{" "}
+                      <strong className="text-foreground">Ошибка монтажа</strong> и{" "}
+                      <strong className="text-foreground">Источник</strong> (пособие, страницы).
+                    </li>
+                    <li>Шаги сборки — нумерованный список. Ограничения не переносите на другие линейки.</li>
+                  </ul>
+                  <pre className="max-h-52 overflow-auto rounded-md bg-background border p-2 text-[11px] leading-snug whitespace-pre-wrap text-foreground/90">{`# SANEXT: монтаж и совместимость
+
+Кратко: на каком пособии основан файл.
+
+## Содержание
+
+1. Трубы и соединения
+
+## 1. Трубы и соединения
+
+### Назначение труб и совместимость соединений
+
+| Линейка | Назначение | Соединения |
+| --- | --- | --- |
+| «Универсальная» | Отопление, водоснабжение | Надвижная гильза; SANEXT Lite |
+| «Стабил» | Отопление, водоснабжение | Надвижная гильза; Lite не совместим |
+
+**Чего следует избегать:** выбирать фитинг только по диаметру.
+**Проверка:** маркировка трубы, фитинга и гильзы.
+**Источник:** SANEXT S.3.0 (2023), с. 7.
+`}</pre>
+                </div>
+              )}
               {processingType === "instruction" && (
                 <details className="rounded-lg border bg-muted/40 p-3 text-sm">
                   <summary className="cursor-pointer font-medium select-none">
@@ -882,18 +973,27 @@ export default function DocumentsPage() {
                 <p className="font-medium">
                   {processingType === "catalog_single" ? "Выбрать файл(ы)" : "Выбрать файл"}
                 </p>
-                <p className="text-xs text-muted-foreground">PDF / Excel / Word / Markdown • до 100MB</p>
+                <p className="text-xs text-muted-foreground">
+                  {processingType === "installation"
+                    ? "Markdown (.md) • до 100MB"
+                    : "PDF / Excel / Word / Markdown • до 100MB"}
+                </p>
                 <input
                   ref={fileInputRef}
                   type="file"
                   onChange={handleFileSelect}
-                  accept=".pdf,.xlsx,.docx,.md,.markdown"
+                  accept={
+                    processingType === "installation"
+                      ? ".md,.markdown"
+                      : ".pdf,.xlsx,.docx,.md,.markdown"
+                  }
                   multiple={processingType === "catalog_single"}
                   className="hidden"
                 />
               </div>
 
               {(processingType === "instruction" ||
+                processingType === "installation" ||
                 processingType === "general" ||
                 processingType === "catalog_single" ||
                 processingType === "catalog") && (

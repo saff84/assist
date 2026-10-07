@@ -58,6 +58,7 @@ export const documents = mysqlTable(
       "certificate",
       "passport",
       "warranty_faq",
+      "installation",
       "company",
     ])
       .default("general")
@@ -69,6 +70,7 @@ export const documents = mysqlTable(
       "certificate",
       "passport",
       "warranty_faq",
+      "installation",
       "company",
     ])
       .default("general")

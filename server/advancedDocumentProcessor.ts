@@ -14,7 +14,8 @@ export type ProcessingType =
   | "catalog"
   | "certificate"
   | "passport"
-  | "warranty_faq";
+  | "warranty_faq"
+  | "installation";
 
 export interface DocumentMetadata {
   hasTableOfContents?: boolean;
@@ -357,6 +358,7 @@ export async function processDocument(
       return processSimple(text, chunkSize, overlap);
     
     case "instruction":
+    case "installation":
       return processInstruction(text, chunkSize, overlap);
     
     case "catalog":

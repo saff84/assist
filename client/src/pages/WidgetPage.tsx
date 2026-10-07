@@ -143,7 +143,7 @@ export default function WidgetPage() {
     window.SanextChatWidget && window.SanextChatWidget.init({
       apiBaseUrl: API,
       title: 'SANEXT Assistant',
-      subtitle: 'Задайте вопрос по товарам',
+      subtitle: 'Выберите тему и задайте вопрос',
       position: 'bottom-right'
     });
   };

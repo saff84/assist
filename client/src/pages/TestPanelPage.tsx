@@ -18,7 +18,7 @@ interface Message {
     filename: string;
     title?: string | null;
     fileType: string;
-    docType: "catalog" | "instruction" | "general" | "certificate" | "passport" | "warranty_faq";
+    docType: "catalog" | "instruction" | "general" | "certificate" | "passport" | "warranty_faq" | "installation";
     previewUrl: string;
     downloadUrl: string;
   }>;
@@ -63,13 +63,14 @@ const stageLabel = (stage: ProcessingStage) => {
   }
 };
 
-type ChatTopic = "products" | "instructions" | "certificates" | "passports" | "warranty";
+type ChatTopic = "products" | "instructions" | "installation" | "certificates" | "passports" | "warranty";
 type ForcedDocType =
   | "catalog"
   | "instruction"
   | "certificate"
   | "passport"
-  | "warranty_faq";
+  | "warranty_faq"
+  | "installation";
 
 export default function TestPanelPage() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -181,6 +182,8 @@ export default function TestPanelPage() {
         ? "catalog"
         : picked === "instructions"
           ? "instruction"
+          : picked === "installation"
+            ? "installation"
           : picked === "certificates"
             ? "certificate"
             : picked === "passports"
@@ -193,6 +196,8 @@ export default function TestPanelPage() {
         ? "Уточните, пожалуйста: какой товар (артикул/наименование) и что именно нужно — характеристики, подбор/совместимость, комплектация?"
         : picked === "instructions"
           ? "Уточните, пожалуйста: по какому изделию/системе нужен монтаж или инструкция и какой этап вас интересует?"
+          : picked === "installation"
+            ? "Уточните линейку, узел или этап: совместимость соединений, ошибка монтажа или порядок сборки."
           : picked === "certificates"
             ? "Уточните, пожалуйста: по какому товару (артикул/наименование) нужен сертификат и какой именно (например, соответствия/пожарный/гигиенический)?"
             : picked === "passports"
@@ -276,6 +281,17 @@ export default function TestPanelPage() {
                         >
                           Вопрос по: Товарам
                         </Button>
+                        {availableTopics?.hasInstallation && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={topic === "installation" ? "default" : "outline"}
+                            onClick={() => handlePickTopic("installation")}
+                            disabled={processingStage !== "idle"}
+                          >
+                            Вопрос по: Монтажу и совместимости
+                          </Button>
+                        )}
                         {availableTopics?.hasInstructions && (
                           <Button
                             type="button"

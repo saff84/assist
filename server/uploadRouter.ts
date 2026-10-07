@@ -65,12 +65,14 @@ function inferDocumentType(
     | "certificate"
     | "passport"
     | "warranty_faq"
-): "catalog" | "instruction" | "general" | "certificate" | "passport" | "warranty_faq" {
+    | "installation"
+): "catalog" | "instruction" | "general" | "certificate" | "passport" | "warranty_faq" | "installation" {
   if (processingType === "catalog") return "catalog";
   if (processingType === "instruction") return "instruction";
   if (processingType === "certificate") return "certificate";
   if (processingType === "passport") return "passport";
   if (processingType === "warranty_faq") return "warranty_faq";
+  if (processingType === "installation") return "installation";
 
   const normalized = filename.toLowerCase();
   if (normalized.includes("каталог")) return "catalog";
@@ -365,7 +367,8 @@ export function registerUploadRoutes(app: Express) {
         | "catalog"
         | "certificate"
         | "passport"
-        | "warranty_faq";
+        | "warranty_faq"
+        | "installation";
       const titleRaw = typeof req.body.title === "string" ? req.body.title : undefined;
       const title = titleRaw?.toString().trim();
       const skuRaw = typeof req.body.sku === "string" ? req.body.sku : undefined;
@@ -640,7 +643,8 @@ async function processDocumentAsync(
     | "catalog"
     | "certificate"
     | "passport"
-    | "warranty_faq" = "general",
+    | "warranty_faq"
+    | "installation" = "general",
   skipFullProcessing: boolean = false,
   meta: { title?: string | null; sku?: string | null } = {}
 ) {

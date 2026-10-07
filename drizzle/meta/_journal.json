@@ -120,6 +120,13 @@
       "when": 1770005000000,
       "tag": "0023_knowledge_sync_sources",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1770006000000,
+      "tag": "0024_installation_doc_type",
+      "breakpoints": true
     }
   ]
 }

@@ -96,7 +96,9 @@ export interface RAGResponse {
   }>;
   responseTime: number;
   tokensUsed: number;
-  suggestedTopics?: Array<"products" | "instructions" | "certificates" | "passports" | "warranty">;
+  suggestedTopics?: Array<
+    "products" | "instructions" | "installation" | "certificates" | "passports" | "warranty"
+  >;
   mode?: "company" | "scoped";
   diagnostics?: {
     retrieval: RetrievalDiagnostics;
@@ -861,7 +863,8 @@ async function retrieveAndScoreChunks(
   const intents = {
     installation:
       hasInstallationIntent(query) ||
-      options?.forceDocumentType === "instruction",
+      options?.forceDocumentType === "instruction" ||
+      options?.forceDocumentType === "installation",
     catalog:
       hasCatalogIntent(query) || options?.forceDocumentType === "catalog",
   };
@@ -957,6 +960,11 @@ async function retrieveAndScoreChunks(
   });
 
   let candidateChunks = chunksWithScores;
+  if (options?.forceDocumentType) {
+    candidateChunks = candidateChunks.filter(
+      (chunk) => chunk.docType === options.forceDocumentType
+    );
+  }
   const hasVariantPreference = chunksWithScores.some((chunk) =>
     chunk.boostsApplied.includes("variant_match")
   );
@@ -1828,6 +1836,7 @@ async function buildAttachmentsForSources(
     const shouldAttach =
       Boolean(downloadFilename) ||
       docType === "instruction" ||
+      docType === "installation" ||
       docType === "certificate" ||
       docType === "passport";
 
@@ -3160,10 +3169,12 @@ async function buildSuggestedTopics(): Promise<
     "certificate",
     "passport",
     "warranty_faq",
+    "installation",
   ]);
   const topics: NonNullable<RAGResponse["suggestedTopics"]> = [];
   if (availability.catalog) topics.push("products");
   if (availability.instruction) topics.push("instructions");
+  if (availability.installation) topics.push("installation");
   if (availability.certificate) topics.push("certificates");
   if (availability.passport) topics.push("passports");
   if (availability.warranty_faq) topics.push("warranty");
@@ -3173,22 +3184,27 @@ async function buildSuggestedTopics(): Promise<
 function buildCompanyNoAnswerMessage(
   suggested: NonNullable<RAGResponse["suggestedTopics"]>
 ): string {
-  const labels: Record<string, string> = {
-    products: "Товары",
-    instructions: "Инструкции",
-    certificates: "Сертификаты",
-    passports: "Паспорта",
-    warranty: "Гарантия",
+  const topicsHint = suggested.length
+    ? "Или выберите другую тему ниже."
+    : "Попробуйте переформулировать запрос.";
+  return `В материалах о компании нет ответа на этот вопрос. ${topicsHint}`;
+}
+
+async function replyMaterialNotFound(
+  response: string,
+  start: number
+): Promise<RAGResponse> {
+  const suggestedTopics = await buildSuggestedTopics();
+  const text = /другую тему/i.test(response)
+    ? response
+    : `${response.trim()}\n\nЕсли вопрос про другую тему — выберите её ниже.`;
+  return {
+    response: text,
+    sources: [],
+    suggestedTopics,
+    responseTime: Date.now() - start,
+    tokensUsed: Math.ceil(text.length / TOKEN_CHAR_RATIO),
   };
-  const list = suggested.map((t) => labels[t] || t).filter(Boolean);
-  const topicsHint = list.length
-    ? `Или выберите категорию: ${list.join(", ")}.`
-    : "Или выберите категорию вопроса выше (товары, инструкции и т.д.).";
-  return (
-    "В материалах о компании нет ответа на этот вопрос. " +
-    "Попробуйте переформулировать запрос. " +
-    topicsHint
-  );
 }
 
 function looksLikeCompanyRefusal(text: string): boolean {
@@ -3392,6 +3408,8 @@ export async function processRAGQuery(
         return "Паспорта";
       case "warranty_faq":
         return "Гарантия (FAQ)";
+      case "installation":
+        return "Монтаж и совместимость оборудования";
       case "company":
         return "О компании";
       default:
@@ -3447,15 +3465,10 @@ export async function processRAGQuery(
       };
     }
 
-    const clarification = `В базе знаний нет документов по теме "${docTypeLabel(
+    const clarification = `В теме «${docTypeLabel(
       forcedDocType
-    )}", подходящих под ваш запрос. Попробуйте уточнить название изделия или артикул.`;
-    return {
-      response: clarification,
-      sources: [],
-      responseTime: Date.now() - start,
-      tokensUsed: Math.ceil(clarification.length / TOKEN_CHAR_RATIO),
-    };
+    )}» ничего не нашлось по этому запросу. Уточните название изделия или артикул.`;
+    return replyMaterialNotFound(clarification, start);
   }
 
   const retrieval = await retrieveAndScoreChunks(
@@ -3488,15 +3501,8 @@ export async function processRAGQuery(
   }
 
   if (!filtered.length) {
-    const clarification = await generateClarifyingResponse(
-      ragQuery.query
-    );
-    return {
-      response: clarification,
-      sources: [],
-      responseTime: Date.now() - start,
-      tokensUsed: Math.ceil(clarification.length / TOKEN_CHAR_RATIO),
-    };
+    const clarification = await generateClarifyingResponse(ragQuery.query);
+    return replyMaterialNotFound(clarification, start);
   }
 
   // Filter by document type based on query intent
@@ -3505,7 +3511,8 @@ export async function processRAGQuery(
   const intents = {
     installation:
       hasInstallationIntent(ragQuery.query) ||
-      forcedDocType === "instruction",
+      forcedDocType === "instruction" ||
+      forcedDocType === "installation",
     catalog:
       hasCatalogIntent(ragQuery.query) || forcedDocType === "catalog",
   };
@@ -3515,7 +3522,11 @@ export async function processRAGQuery(
 
   // For very generic catalog queries without product context, ask a clarification
   // before taking fast/raw single-chunk paths.
-  if (intents.catalog && isTooGenericCatalogQuery(ragQuery.query)) {
+  if (
+    (!forcedDocType || forcedDocType === "catalog") &&
+    intents.catalog &&
+    isTooGenericCatalogQuery(ragQuery.query)
+  ) {
     const clarification =
       "Уточните, пожалуйста, о каком товаре идет речь (название или артикул). " +
       "Например: «характеристики универсальной трубы SANEXT» или «характеристики артикула 1181».";
@@ -3531,15 +3542,10 @@ export async function processRAGQuery(
   if (forcedDocType) {
     typeFiltered = filtered.filter((chunk) => chunk.docType === forcedDocType);
     if (!typeFiltered.length) {
-      const clarification = `В базе знаний нет документов по теме "${docTypeLabel(
+      const clarification = `В теме «${docTypeLabel(
         forcedDocType
-      )}", чтобы ответить на ваш вопрос. Попробуйте выбрать другую тематику или загрузить соответствующие документы.`;
-      return {
-        response: clarification,
-        sources: [],
-        responseTime: Date.now() - start,
-        tokensUsed: Math.ceil(clarification.length / TOKEN_CHAR_RATIO),
-      };
+      )}» нет материала по этому вопросу.`;
+      return replyMaterialNotFound(clarification, start);
     }
   } else if (intents.installation) {
     // For installation questions, use only instruction documents
@@ -3556,15 +3562,9 @@ export async function processRAGQuery(
 
   if (!typeFiltered.length && (intents.installation || intents.catalog)) {
     // If we filtered by type but got no results, provide helpful message
-    const docType = intents.installation ? "instruction" : "catalog";
-    const docTypeName = intents.installation ? "Пособие по монтажу" : "каталог";
-    const clarification = `В базе знаний нет документов типа "${docTypeName}" для ответа на ваш вопрос. ${intents.installation ? "Загрузите «Пособие по монтажу» для получения информации о монтаже." : "Используйте каталог для вопросов о характеристиках товаров."}`;
-    return {
-      response: clarification,
-      sources: [],
-      responseTime: Date.now() - start,
-      tokensUsed: Math.ceil(clarification.length / TOKEN_CHAR_RATIO),
-    };
+    const docTypeName = intents.installation ? "Инструкции" : "Товары";
+    const clarification = `В теме «${docTypeName}» нет материала для ответа на ваш вопрос.`;
+    return replyMaterialNotFound(clarification, start);
   }
 
   const variantFilterKeys = new Set<string>();
@@ -3593,7 +3593,10 @@ export async function processRAGQuery(
         ragQuery.query,
         createStopwordSet(config.retrieval.stopwords.extra)
       ),
-      installation: intents.installation || forcedDocType === "instruction",
+      installation:
+        intents.installation ||
+        forcedDocType === "instruction" ||
+        forcedDocType === "installation",
     }
   );
 
@@ -3603,15 +3606,8 @@ export async function processRAGQuery(
   const meetsFallbackThreshold = topRelevance >= fallbackThreshold;
 
   if (!limited.length || (!meetsAnswerThreshold && !meetsFallbackThreshold)) {
-    const clarification = await generateClarifyingResponse(
-      ragQuery.query
-    );
-    return {
-      response: clarification,
-      sources: [],
-      responseTime: Date.now() - start,
-      tokensUsed: Math.ceil(clarification.length / TOKEN_CHAR_RATIO),
-    };
+    const clarification = await generateClarifyingResponse(ragQuery.query);
+    return replyMaterialNotFound(clarification, start);
   }
 
   if (!meetsAnswerThreshold && meetsFallbackThreshold) {
@@ -4096,6 +4092,16 @@ ${context.context}
   }
   messageContent = normalizeAnswerSpacing(messageContent);
 
+  const materialMissing =
+    attachments.length === 0 &&
+    /нет информации о\s*(вашем\s*)?вопрос|нет сведений|не найден[аоы]?\s+информац|информаци[яи]\s+отсутству|не удалось найти|в (предоставленных )?источниках нет|не располагаю (данными|информацией)/i.test(
+      messageContent
+    );
+  const suggestedTopics = materialMissing ? await buildSuggestedTopics() : undefined;
+  if (materialMissing && suggestedTopics?.length && !/другую тему/i.test(messageContent)) {
+    messageContent = `${messageContent.trim()}\n\nЕсли вопрос про другую тему — выберите её ниже.`;
+  }
+
   // Debug logging: log LLM response
   if (config.logging?.enabled) {
     console.log(`[RAG] LLM Response (first 500 chars):\n${messageContent.slice(0, 500)}...`);
@@ -4132,6 +4138,7 @@ ${context.context}
     sources,
     chunks,
     attachments,
+    ...(suggestedTopics?.length ? { suggestedTopics } : {}),
     responseTime: Date.now() - start,
     tokensUsed:
       Math.ceil(ragQuery.query.length / TOKEN_CHAR_RATIO) +

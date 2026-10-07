@@ -17,6 +17,7 @@ const chatInputSchema = z.object({
       "certificate",
       "passport",
       "warranty_faq",
+      "installation",
       "company",
     ])
     .optional(),
@@ -76,6 +77,7 @@ export function registerWidgetRoutes(app: Express) {
         "certificate",
         "passport",
         "warranty_faq",
+        "installation",
       ]);
       const hasFaqChunks = await faqDb.hasAnyFaqEntries().catch(() => false);
 
@@ -84,6 +86,7 @@ export function registerWidgetRoutes(app: Express) {
         hasCertificates: availability.certificate,
         hasPassports: availability.passport,
         hasWarrantyFaq: availability.warranty_faq || hasFaqChunks,
+        hasInstallation: availability.installation,
       });
     } catch (error) {
       console.error("[Widget] Failed to load topics:", error);
@@ -92,6 +95,7 @@ export function registerWidgetRoutes(app: Express) {
         hasCertificates: false,
         hasPassports: false,
         hasWarrantyFaq: false,
+        hasInstallation: false,
       });
     }
   });

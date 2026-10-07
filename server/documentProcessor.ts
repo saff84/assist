@@ -27,7 +27,8 @@ export interface ProcessedDocument {
     | "general"
     | "certificate"
     | "passport"
-    | "warranty_faq";
+    | "warranty_faq"
+    | "installation";
   numPages: number;
   title?: string;
   toc: Array<{
@@ -1420,8 +1421,15 @@ export async function processDocument(
     };
   }>;
 
-  if (processingType === "catalog" || processingType === "instruction") {
-    chunks = createStructuredSectionChunks(structured, processingType);
+  if (
+    processingType === "catalog" ||
+    processingType === "instruction" ||
+    processingType === "installation"
+  ) {
+    chunks = createStructuredSectionChunks(
+      structured,
+      processingType === "catalog" ? "catalog" : "instruction"
+    );
   } else {
     chunks = createGeneralChunks(structured.elements || []);
   }
@@ -1514,7 +1522,8 @@ export async function processDocument(
         | "general"
         | "certificate"
         | "passport"
-        | "warranty_faq",
+        | "warranty_faq"
+        | "installation",
       numPages: structured.numPages || 0,
       title: structured.title,
       toc,

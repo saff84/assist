@@ -5,6 +5,7 @@ export type DocumentType =
   | "certificate"
   | "passport"
   | "warranty_faq"
+  | "installation"
   | "company";
 
 export interface LLMConfig {
