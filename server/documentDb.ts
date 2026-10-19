@@ -333,12 +333,13 @@ export async function updateDocumentSyncRecord(
   fields: {
     title?: string | null;
     filename?: string;
+    fileType?: "pdf" | "md";
     fileSize?: number;
     contentHash?: string | null;
     sourceSyncedAt?: Date | null;
     syncSourceId?: number | null;
-    docType?: "certificate" | "passport";
-    processingType?: "certificate" | "passport";
+    docType?: "certificate" | "passport" | "installation";
+    processingType?: "certificate" | "passport" | "installation";
     status?: "processing" | "indexed" | "failed";
     errorMessage?: string | null;
     processingMessage?: string | null;
@@ -352,6 +353,7 @@ export async function updateDocumentSyncRecord(
   };
   if (fields.title !== undefined) updates.title = fields.title;
   if (fields.filename !== undefined) updates.filename = fields.filename;
+  if (fields.fileType !== undefined) updates.fileType = fields.fileType;
   if (fields.fileSize !== undefined) updates.fileSize = fields.fileSize;
   if (fields.contentHash !== undefined) updates.contentHash = fields.contentHash;
   if (fields.sourceSyncedAt !== undefined) updates.sourceSyncedAt = fields.sourceSyncedAt;

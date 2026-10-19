@@ -1,3 +1,5 @@
+import fs from "fs";
+import { installationPath, indexInstallationMarkdown } from "./installationKnowledge";
 ﻿import { router, publicProcedure, protectedProcedure, knowledgeProcedure } from "./_core/trpc";
 import { z } from "zod";
 import * as documentDb from "./documentDb";
@@ -26,6 +28,14 @@ import * as syncSourcesDb from "./knowledgeSyncSourcesDb";
  */
 
 export const documentRouter = router({
+  getInstallationDraft: knowledgeProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+    const doc = await documentDb.getDocumentById(input.id);
+    if (!doc || doc.docType !== "installation" || doc.fileType !== "md") throw new TRPCError({ code: "NOT_FOUND", message: "Markdown не найден" });
+    return { markdown: fs.readFileSync(installationPath(doc.id, doc.filename), "utf8") };
+  }),
+  indexInstallationDraft: knowledgeProcedure.input(z.object({ id: z.number(), markdown: z.string().min(80).max(5_000_000) }))
+    .mutation(async ({ input }) => indexInstallationMarkdown(input.id, input.markdown)),
+
   /**
    * Get all documents
    */
@@ -1566,10 +1576,11 @@ export const documentRouter = router({
     .input(z.object({ sourceId: z.number().optional() }).optional())
     .mutation(async ({ input }) => {
       try {
-        const result = await runSanextKnowledgeSync({
+        if (getSanextSyncStatus().inProgress) throw new Error("Синхронизация уже выполняется");
+        void runSanextKnowledgeSync({
           sourceId: input?.sourceId,
-        });
-        return result;
+        }).catch(error => console.error("[SanextSync] Background run failed", error));
+        return { started: true };
       } catch (error) {
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",

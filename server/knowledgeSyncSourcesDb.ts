@@ -137,6 +137,7 @@ export async function deleteKnowledgeSyncSource(id: number): Promise<{
       filename: documents.filename,
       status: documents.status,
       errorMessage: documents.errorMessage,
+      docType: documents.docType,
       chunksCount: documents.chunksCount,
     })
     .from(documents)
@@ -145,6 +146,7 @@ export async function deleteKnowledgeSyncSource(id: number): Promise<{
   let deletedFailed = 0;
   let detached = 0;
   const keepIds: number[] = [];
+  const restoreIds: number[] = [];
 
   for (const doc of linked) {
     // Only hard-delete never-usable write failures (no annotation value)
@@ -159,6 +161,7 @@ export async function deleteKnowledgeSyncSource(id: number): Promise<{
     } else {
       // Indexed + soft orphans ("снят со страницы") stay in KB, just detach
       keepIds.push(doc.id);
+      if (doc.docType !== "installation" && doc.status === "failed" && doc.errorMessage?.includes("Снят со страницы")) restoreIds.push(doc.id);
       detached += 1;
     }
   }
@@ -168,15 +171,15 @@ export async function deleteKnowledgeSyncSource(id: number): Promise<{
       .update(documents)
       .set({
         syncSourceId: null,
-        // Restore soft-orphans so they remain searchable by title
-        status: "indexed",
-        processingStage: "completed",
-        processingProgress: 100,
-        errorMessage: null,
         processingMessage: "Отвязан от удалённого источника синхронизации",
         updatedAt: new Date(),
       } as any)
       .where(inArray(documents.id, keepIds));
+  }
+
+  if (restoreIds.length) {
+    await db.update(documents).set({ status: "indexed", processingStage: "completed", processingProgress: 100, errorMessage: null })
+      .where(inArray(documents.id, restoreIds));
   }
 
   await db.delete(knowledgeSyncSources).where(eq(knowledgeSyncSources.id, id));
@@ -192,6 +195,9 @@ export async function listDocumentsForSyncSource(sourceId: number) {
       title: documents.title,
       filename: documents.filename,
       status: documents.status,
+      docType: documents.docType,
+      processingMessage: documents.processingMessage,
+      chunksCount: documents.chunksCount,
       fileSize: documents.fileSize,
       sourceUrl: documents.sourceUrl,
       sourceSyncedAt: documents.sourceSyncedAt,

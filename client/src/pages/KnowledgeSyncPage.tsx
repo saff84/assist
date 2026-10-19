@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { InstallationDraftButton } from "@/components/InstallationDraftButton";
+import { useEffect, useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -133,21 +134,8 @@ export default function KnowledgeSyncPage() {
   });
 
   const syncMutation = trpc.document.runSanextSync.useMutation({
-    onSuccess: async (result) => {
-      toast.success(
-        `Синхронизация: +${result.added}, обновлено ${result.updated}, без изменений ${result.unchanged}, снято ${result.orphaned}`
-      );
-      if (result.errors?.length) {
-        const preview = result.errors
-          .slice(0, 3)
-          .map((e) => e.message)
-          .join("; ");
-        toast.warning(
-          `Предупреждения (${result.errors.length}): ${preview}${
-            result.errors.length > 3 ? "…" : ""
-          }`
-        );
-      }
+    onSuccess: async () => {
+      toast.success("Синхронизация запущена. Результаты появятся в подробном отчёте.");
       await Promise.all([
         utils.document.listKnowledgeSyncSources.invalidate(),
         utils.document.getKnowledgeSyncSourceDocuments.invalidate(),
@@ -162,6 +150,13 @@ export default function KnowledgeSyncPage() {
   });
 
   const syncBusy = syncMutation.isPending || Boolean(syncStatus?.inProgress);
+
+  useEffect(() => {
+    if (!syncStatus?.lastResult?.finishedAt) return;
+    void utils.document.listKnowledgeSyncSources.invalidate();
+    void utils.document.getKnowledgeSyncSourceDocuments.invalidate();
+    void utils.document.listDocuments.invalidate();
+  }, [syncStatus?.lastResult?.finishedAt, utils]);
 
   const sortedSources = useMemo(() => sources ?? [], [sources]);
 
@@ -273,10 +268,18 @@ export default function KnowledgeSyncPage() {
           <h1 className="text-3xl font-bold">Синхронизация с сайта</h1>
           <p className="text-muted-foreground mt-1 max-w-2xl">
             Укажите страницы для парсинга и правила отбора ссылок. В каждом пункте — список уже
-            скачанных документов. Поиск в чате идёт по названию файла.
+            скачанных документов. Паспорта преобразуются в Markdown для раздела монтажа.
+            Проверьте MD и запустите индексацию, чтобы использовать его в ответах.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {sources && !sources.some(source => source.docType === "passport" && source.pageUrl.includes("/tehnicheskie-pasporta/")) && (
+            <Button variant="outline" disabled={createMutation.isPending} onClick={() => createMutation.mutate({
+              ...emptyForm(), name: "Технические паспорта SANEXT",
+              pageUrl: "https://www.sanext.ru/baza-znaniy/tehnicheskie-pasporta/",
+              titleStripPrefix: "pdf", linkTextMustContain: null,
+            })}>Добавить паспорта SANEXT</Button>
+          )}
           <Button
             variant="outline"
             className="gap-2"
@@ -317,18 +320,50 @@ export default function KnowledgeSyncPage() {
           </p>
           {syncStatus.lastResult?.errors?.length ? (
             <ul className="list-disc list-inside text-amber-700 dark:text-amber-400 max-h-24 overflow-auto">
-              {syncStatus.lastResult.errors.slice(0, 8).map((e, i) => (
+              {syncStatus.lastResult.errors.map((e, i) => (
                 <li key={`${e.url ?? ""}-${i}`}>
-                  {e.url ? `${e.url}: ` : ""}
+                  {e.stage ? `[${e.stage}] ` : ""}{e.url ? `${e.url}: ` : ""}
                   {e.message}
                 </li>
               ))}
-              {syncStatus.lastResult.errors.length > 8 ? (
-                <li>…и ещё {syncStatus.lastResult.errors.length - 8}</li>
-              ) : null}
+
             </ul>
           ) : null}
         </div>
+      )}
+
+      {syncStatus?.lastResult && (
+        <Card>
+          <CardHeader><CardTitle>Подробный отчёт синхронизации</CardTitle>
+            <CardDescription>PDF: добавлено {syncStatus.lastResult.added}, обновлено {syncStatus.lastResult.updated}, без изменений {syncStatus.lastResult.unchanged}, снято {syncStatus.lastResult.orphaned}. Ошибок и пропусков: {syncStatus.lastResult.errors.length}.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Button variant="outline" size="sm" onClick={() => {
+              const blob = new Blob([JSON.stringify(syncStatus.lastResult, null, 2)], { type: "application/json" });
+              const url = URL.createObjectURL(blob); const link = document.createElement("a");
+              link.href = url; link.download = "sync-report.json"; link.click(); URL.revokeObjectURL(url);
+            }}>Скачать полный отчёт</Button>
+            <p className="text-sm">
+              Успешно обработано: {(syncStatus.lastResult.files ?? []).filter(file => file.outcome !== "failed" && file.outcome !== "skipped").length}.
+              Неуспешно: {(syncStatus.lastResult.files ?? []).filter(file => file.outcome === "failed").length}.
+              Пропущено: {(syncStatus.lastResult.files ?? []).filter(file => file.outcome === "skipped").length}.
+              {syncStatus.inProgress ? " Обработка продолжается…" : ""}
+            </p>
+            {syncStatus.lastResult.sourceResults.map(source => <p key={source.sourceId} className="text-sm">
+              {source.name}: найдено ссылок {source.linkCount}, сохранено PDF {source.added + source.updated + source.unchanged}
+            </p>)}
+            <div className="max-h-[32rem] overflow-auto space-y-2">
+              {(syncStatus.lastResult.files ?? []).map((file, i) => <div key={`${file.url}-${i}`} className="rounded border p-3 text-sm space-y-1">
+                <p className="font-medium">{file.title} · {file.sourceName}</p>
+                <p className={file.outcome === "failed" ? "text-destructive" : "text-muted-foreground"}>
+                  {{ added: "Добавлен", updated: "Обновлён", unchanged: "Без изменений", failed: "Ошибка", skipped: "Пропущен" }[file.outcome]} · {file.stage}: {file.message}
+                </p>
+                <a href={file.url} target="_blank" rel="noreferrer" className="block break-all underline">{file.url}</a>
+                {file.knowledgeId && <InstallationDraftButton id={file.knowledgeId} />}
+              </div>)}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {showCreate && (
@@ -558,8 +593,11 @@ export default function KnowledgeSyncPage() {
                                       ? ` · ${new Date(doc.sourceSyncedAt).toLocaleString()}`
                                       : ""}
                                   </div>
+                                  {doc.processingMessage && <p className="text-xs text-muted-foreground">{doc.processingMessage}</p>}
+                                  {doc.errorMessage && <p className="text-xs text-destructive whitespace-pre-wrap">{doc.errorMessage}</p>}
                                 </div>
                                 <div className="flex items-center gap-2 shrink-0">
+                                  {doc.docType === "installation" && <InstallationDraftButton id={doc.id} />}
                                   <Badge
                                     variant={
                                       doc.status === "indexed"

@@ -1,3 +1,4 @@
+import { InstallationDraftButton } from "@/components/InstallationDraftButton";
 import { useState, useRef, useEffect, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
@@ -217,9 +218,10 @@ export default function DocumentsPage() {
     if (
       processingType === "installation" &&
       fileExt !== ".md" &&
-      fileExt !== ".markdown"
+      fileExt !== ".markdown" &&
+      fileExt !== ".pdf"
     ) {
-      toast.error("Для темы «Монтаж и совместимость» загрузите файл Markdown (.md)");
+      toast.error("Для темы «Монтаж и совместимость» загрузите PDF или Markdown (.md)");
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
@@ -490,6 +492,7 @@ export default function DocumentsPage() {
               </CardDescription>
             </div>
             <div className="flex items-center gap-1 shrink-0">
+              {doc.docType === "installation" && doc.fileType === "md" && <InstallationDraftButton id={doc.id} />}
               {getStatusIcon(doc.status)}
               <Button
                 variant="outline"
@@ -883,9 +886,9 @@ export default function DocumentsPage() {
                     Как оформить Markdown «Монтаж и совместимость оборудования»
                   </p>
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    Один файл — свод по монтажу и совместимости линеек. Поиск в чате идёт по
-                    заголовкам разделов. Загружается только <code>.md</code>. PDF пособия можно
-                    приложить отдельно: его получит пользователь, а ответ строится по Markdown.
+                    Загрузите PDF паспорта или готовый Markdown. PDF будет преобразован в MD:
+                    проверьте текст через кнопку «Проверить MD» и запустите индексацию.
+                    Оригинал PDF сохраняется. Сканы без текста требуют OCR.
                   </p>
                   <ul className="list-disc list-inside space-y-1.5 text-xs text-muted-foreground leading-relaxed">
                     <li>
@@ -975,7 +978,7 @@ export default function DocumentsPage() {
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {processingType === "installation"
-                    ? "Markdown (.md) • до 100MB"
+                    ? "PDF / Markdown (.md) • до 100MB"
                     : "PDF / Excel / Word / Markdown • до 100MB"}
                 </p>
                 <input
@@ -984,7 +987,7 @@ export default function DocumentsPage() {
                   onChange={handleFileSelect}
                   accept={
                     processingType === "installation"
-                      ? ".md,.markdown"
+                      ? ".pdf,.md,.markdown"
                       : ".pdf,.xlsx,.docx,.md,.markdown"
                   }
                   multiple={processingType === "catalog_single"}

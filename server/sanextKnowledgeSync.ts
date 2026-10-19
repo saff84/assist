@@ -1,3 +1,4 @@
+import { preparePassportKnowledge } from "./installationKnowledge";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -12,14 +13,27 @@ export type SanextLinkItem = {
   title: string;
 };
 
+export function syncErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const cause = error.cause as { code?: string; message?: string } | undefined;
+  return [error.message, cause?.code, cause?.message].filter(Boolean).join(" · ");
+}
+
+export type SyncFileReport = {
+  sourceId: number; sourceName: string; docType: "passport" | "certificate";
+  url: string; title: string; outcome: "added" | "updated" | "unchanged" | "failed" | "skipped";
+  stage: string; message: string; knowledgeId?: number;
+};
+
 export type SanextSyncResult = {
+  files: SyncFileReport[];
   startedAt: string;
   finishedAt: string;
   added: number;
   updated: number;
   unchanged: number;
   orphaned: number;
-  errors: Array<{ url?: string; message: string }>;
+  errors: Array<{ url?: string; message: string; stage?: string; sourceId?: number }>;
   byType: Record<
     "passport" | "certificate",
     { added: number; updated: number; unchanged: number; orphaned: number }
@@ -48,6 +62,22 @@ const status: SyncStatus = {
   lastResult: null,
   lastError: null,
 };
+
+const reportPath = path.resolve("uploads", "sync-reports", "last.json");
+try {
+  if (fs.existsSync(reportPath)) {
+    status.lastResult = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+    status.lastRunAt = status.lastResult?.finishedAt || null;
+  }
+} catch (error) { console.warn("[SanextSync] Cannot load previous report", error); }
+
+function saveReport(result: SanextSyncResult) {
+  try {
+    fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+    fs.writeFileSync(`${reportPath}.tmp`, JSON.stringify(result, null, 2));
+    fs.renameSync(`${reportPath}.tmp`, reportPath);
+  } catch (error) { console.error("[SanextSync] Cannot save report", error); }
+}
 
 let syncTimer: ReturnType<typeof setInterval> | null = null;
 let startupTimer: ReturnType<typeof setTimeout> | null = null;
@@ -262,7 +292,8 @@ async function upsertLink(
   } catch (err) {
     result.errors.push({
       url: item.url,
-      message: err instanceof Error ? err.message : String(err),
+      message: syncErrorMessage(err),
+      stage: "Скачивание PDF",
     });
     return;
   }
@@ -270,7 +301,8 @@ async function upsertLink(
   if (buffer.length < 100 || buffer.subarray(0, 4).toString("latin1") !== "%PDF") {
     result.errors.push({
       url: item.url,
-      message: "Downloaded file is not a valid PDF",
+      message: "Сервер вернул не PDF или пустой файл (возможно, HTML-страницу ошибки)",
+      stage: "Проверка PDF",
     });
     return;
   }
@@ -329,7 +361,7 @@ async function upsertLink(
     return;
   }
 
-  const sameHash = existing.contentHash === hash;
+  const sameHash = existing.contentHash === hash && existing.status === "indexed";
   const existingPath = permanentFilePath(existing.id, existing.filename);
   const fileMissing = !fs.existsSync(existingPath);
 
@@ -413,8 +445,8 @@ async function syncOneSource(
   try {
     html = await fetchText(source.pageUrl);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    result.errors.push({ url: source.pageUrl, message });
+    const message = syncErrorMessage(err);
+    result.errors.push({ url: source.pageUrl, message, stage: "Загрузка страницы", sourceId: source.id });
     await syncSourcesDb.updateKnowledgeSyncSource(source.id, {
       lastSyncedAt: new Date(),
       lastSyncMessage: `Ошибка: ${message}`,
@@ -439,8 +471,8 @@ async function syncOneSource(
   // Do not orphan the library if the page returned no matches (layout change / empty HTML)
   if (links.length === 0) {
     const msg =
-      "На странице не найдено ссылок по правилам — orphaning пропущен";
-    result.errors.push({ url: source.pageUrl, message: msg });
+      `На странице не найдено ссылок по правилам: расширение ${source.fileExtension}, адрес содержит «${source.hrefMustContain}», текст содержит «${source.linkTextMustContain || "любое значение"}». Проверьте URL и фильтры. Существующие документы сохранены.`;
+    result.errors.push({ url: source.pageUrl, message: msg, stage: "Поиск ссылок", sourceId: source.id });
     await syncSourcesDb.updateKnowledgeSyncSource(source.id, {
       lastSyncedAt: new Date(),
       lastSyncMessage: msg,
@@ -459,19 +491,53 @@ async function syncOneSource(
 
   for (const link of links) {
     seenUrls.add(link.url);
+    const report: SyncFileReport = { sourceId: source.id, sourceName: source.name,
+      docType: source.docType, url: link.url, title: link.title,
+      outcome: "failed", stage: "Сохранение PDF", message: "" };
+    const before = { added: result.added, updated: result.updated, errors: result.errors.length };
     try {
       await upsertLink(link, source, uploaderId, result, sourceStats);
+      if (result.errors.length > before.errors) {
+        const error = result.errors[result.errors.length - 1];
+        error.sourceId = source.id;
+        report.outcome = error.message.startsWith("Пропуск:") ? "skipped" : "failed";
+        report.stage = error.stage || (report.outcome === "skipped" ? "Привязка источника" : "Сохранение PDF");
+        report.message = error.message;
+      } else {
+        report.outcome = result.added > before.added ? "added" : result.updated > before.updated ? "updated" : "unchanged";
+        report.message = "PDF сохранён и доступен для скачивания";
+        if (source.docType === "passport") {
+          report.stage = "PDF → Markdown";
+          const passport = await documentDb.getDocumentBySourceUrl(link.url);
+          if (!passport) throw new Error("Сохранённый паспорт не найден в базе");
+          const knowledge = await preparePassportKnowledge(passport.id);
+          report.knowledgeId = knowledge.id;
+          report.message += knowledge.state === "indexed" ? "; знания уже проиндексированы" : "; Markdown готов к проверке и индексации";
+        }
+        report.stage = "Готово";
+      }
     } catch (err) {
-      result.errors.push({
-        url: link.url,
-        message: err instanceof Error ? err.message : String(err),
-      });
+      report.outcome = "failed";
+      report.message = syncErrorMessage(err);
+      result.errors.push({ url: link.url, message: report.message, stage: report.stage, sourceId: source.id });
     }
+    result.files.push(report);
+    saveReport(result);
   }
 
   const existingDocs = await documentDb.listDocumentsBySyncSourceId(source.id);
   for (const doc of existingDocs) {
+    if (doc.docType === "installation") {
+      const parentId = /^passport-(\d+)\.md$/.exec(doc.filename)?.[1];
+      const parent = existingDocs.find(item => item.id === Number(parentId));
+      if (parentId && (!parent?.sourceUrl || !seenUrls.has(parent.sourceUrl))) {
+        await documentDb.updateDocumentStatus(doc.id, "failed", "Исходный паспорт отсутствует в источнике");
+      }
+      continue;
+    }
     if (!doc.sourceUrl || seenUrls.has(doc.sourceUrl)) continue;
+    const derived = existingDocs.find(d => d.docType === "installation" && d.filename === `passport-${doc.id}.md`);
+    if (derived) await documentDb.updateDocumentStatus(derived.id, "failed", "Исходный паспорт снят со страницы источника");
     if (
       doc.status === "failed" &&
       (doc.errorMessage?.includes("Снят со страницы") ||
@@ -492,7 +558,7 @@ async function syncOneSource(
 
   await syncSourcesDb.updateKnowledgeSyncSource(source.id, {
     lastSyncedAt: new Date(),
-    lastSyncMessage: `+${sourceStats.added} ~${sourceStats.updated} =${sourceStats.unchanged} orphan=${sourceStats.orphaned} (ссылок: ${links.length})`,
+    lastSyncMessage: `Ошибок: ${result.errors.filter(e => e.sourceId === source.id).length}. +${sourceStats.added} ~${sourceStats.updated} =${sourceStats.unchanged} orphan=${sourceStats.orphaned} (ссылок: ${links.length})`,
   });
 
   result.sourceResults.push({
@@ -526,6 +592,7 @@ export async function runSanextKnowledgeSync(options?: {
     unchanged: 0,
     orphaned: 0,
     errors: [],
+    files: [],
     byType: {
       passport: emptyTypeStats(),
       certificate: emptyTypeStats(),
@@ -559,16 +626,19 @@ export async function runSanextKnowledgeSync(options?: {
     result.finishedAt = new Date().toISOString();
     status.lastRunAt = result.finishedAt;
     status.lastResult = result;
+    saveReport(result);
     console.log(
       `[SanextSync] Done: +${result.added} ~${result.updated} =${result.unchanged} orphan=${result.orphaned} errors=${result.errors.length}`
     );
     return result;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = syncErrorMessage(err);
     status.lastError = message;
+    result.errors.push({ message, stage: "Выполнение синхронизации" });
     result.finishedAt = new Date().toISOString();
     status.lastRunAt = result.finishedAt;
     status.lastResult = result;
+    saveReport(result);
     console.error("[SanextSync] Failed:", message);
     throw err;
   } finally {

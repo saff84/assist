@@ -1,3 +1,4 @@
+import { pdfToMarkdown } from "./pdfMarkdown";
 import type { Express, Request, Response } from "express";
 import multer from "multer";
 import * as path from "path";
@@ -657,6 +658,24 @@ async function processDocumentAsync(
     fs.renameSync(filePath, tempFileWithExt);
     
     // Process document with specified processing type
+    if (processingType === "installation" && fileType === "pdf") {
+      // Archive the PDF before parsing so a conversion failure never loses the source.
+      saveDocumentOriginalFile(tempFileWithExt, documentId, filename);
+      await documentDb.updateDocumentProgress(documentId, "parsing", 20, "PDF → Markdown");
+      const markdown = await pdfToMarkdown(tempFileWithExt, meta.title || filename);
+      const mdFilename = `${path.parse(filename).name}.md`;
+      saveDocumentCompanionFile(tempFileWithExt, documentId, filename);
+      await documentDb.updateDocumentDownloadFilename(documentId, filename);
+      fs.writeFileSync(path.resolve(ensureDocumentUploadsDir(), `${documentId}_${mdFilename}`), markdown, "utf8");
+      await documentDb.updateDocumentSyncRecord(documentId, {
+        filename: mdFilename, fileType: "md", fileSize: Buffer.byteLength(markdown),
+        status: "processing", errorMessage: null, processingMessage: "Ожидает проверки Markdown",
+      });
+      await documentDb.updateDocumentProgress(documentId, "chunking", 40, "Ожидает проверки Markdown");
+      fs.unlinkSync(tempFileWithExt);
+      return;
+    }
+
     if (skipFullProcessing) {
       console.log(`⏭️ Manual annotation mode for document ${documentId} — skipping automated parsing/chunking`);
       await documentDb.updateDocumentProgress(documentId, "saving", 40, "Подготовка файла для ручной разметки");

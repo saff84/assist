@@ -23,7 +23,7 @@ export async function parseMarkdownDocument(
   let currentSectionPath = "root";
   let currentHeading = pathBasenameTitle(filePath);
   let buffer: string[] = [];
-  const pageNumber = 1;
+  let pageNumber = 1;
   /** counters[level-1] for hierarchical paths */
   const counters = [0, 0, 0, 0, 0, 0];
   let lastLevel = 0;
@@ -93,12 +93,22 @@ export async function parseMarkdownDocument(
     const divider = lines[startIndex + 1]?.trim() ?? "";
     if (!/^\|?\s*:?-{3,}/.test(divider)) return null;
 
-    const splitRow = (line: string) =>
-      line
-        .replace(/^\|/, "")
-        .replace(/\|$/, "")
-        .split("|")
-        .map((cell) => cell.trim());
+    const splitRow = (line: string) => {
+      const body = line.replace(/^\|/, "").replace(/\|$/, "");
+      const cells: string[] = [];
+      let value = "";
+      for (let index = 0; index < body.length; index++) {
+        if (body[index] === "\\" && body[index + 1] === "|") {
+          value += "|";
+          index++;
+        } else if (body[index] === "|") {
+          cells.push(value.trim());
+          value = "";
+        } else value += body[index];
+      }
+      cells.push(value.trim());
+      return cells;
+    };
 
     const headers = splitRow(headerLine).filter((h) => h.length > 0);
     if (headers.length === 0) return null;
@@ -134,6 +144,8 @@ export async function parseMarkdownDocument(
     const line = lines[i];
     const headingMatch = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
     if (headingMatch) {
+      const sourcePage = /^Страница (\d+)$/.exec(headingMatch[2]);
+      if (sourcePage) { flushText(); pageNumber = Number(sourcePage[1]); }
       startSection(headingMatch[1].length, headingMatch[2]);
       continue;
     }
@@ -180,7 +192,7 @@ export async function parseMarkdownDocument(
 
   return {
     title: title || pathBasenameTitle(filePath),
-    numPages: 1,
+    numPages: pageNumber,
     sections,
     toc: sections,
     elements,
