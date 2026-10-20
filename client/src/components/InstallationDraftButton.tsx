@@ -8,10 +8,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { MarkdownRenderer } from "@/components/MarkdownRenderer";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export function InstallationDraftButton({ id }: { id: number }) {
   const [open, setOpen] = useState(false);
   const [markdown, setMarkdown] = useState<string | null>(null);
+  const [view, setView] = useState("preview");
   const utils = trpc.useUtils();
   const draft = trpc.document.getInstallationDraft.useQuery(
     { id },
@@ -36,6 +39,7 @@ export function InstallationDraftButton({ id }: { id: number }) {
         variant="outline"
         onClick={() => {
           setMarkdown(null);
+          setView("preview");
           setOpen(true);
         }}
       >
@@ -47,16 +51,17 @@ export function InstallationDraftButton({ id }: { id: number }) {
           if (!index.isPending) setOpen(value);
         }}
       >
-        <DialogContent className="max-w-4xl">
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-6xl max-h-[95dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Проверка Markdown перед индексацией</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
             Это ручная проверка перед публикацией знаний. Сверьте с PDF все
-            страницы, начало и конец разделов, строки и колонки таблиц, артикулы,
-            единицы измерения и ограничения. Если текст обрывается или таблицы
-            потеряны, не запускайте индексацию — документ требует повторной обработки.
-            После проверки нажмите «Сохранить и индексировать».
+            страницы, начало и конец разделов, строки и колонки таблиц,
+            артикулы, единицы измерения и ограничения. Если текст обрывается или
+            таблицы потеряны, не запускайте индексацию — документ требует
+            повторной обработки. После проверки нажмите «Сохранить и
+            индексировать».
           </p>
           <div className="flex gap-3 text-sm">
             <a
@@ -79,13 +84,33 @@ export function InstallationDraftButton({ id }: { id: number }) {
           {draft.error && (
             <p className="text-destructive">{draft.error.message}</p>
           )}
-          <textarea
-            aria-label="Markdown документа"
-            className="h-[55vh] w-full rounded border p-3 font-mono text-sm"
-            disabled={!draft.data || index.isPending}
-            value={markdown ?? draft.data?.markdown ?? ""}
-            onChange={event => setMarkdown(event.target.value)}
-          />
+          <Tabs value={view} onValueChange={setView} className="min-w-0">
+            <TabsList>
+              <TabsTrigger value="preview">Просмотр документа</TabsTrigger>
+              <TabsTrigger value="edit">Редактировать MD</TabsTrigger>
+            </TabsList>
+            <TabsContent value="preview">
+              <div
+                className="h-[50vh] min-w-0 overflow-auto rounded border p-4"
+                aria-label="Просмотр Markdown документа"
+              >
+                {draft.data ? (
+                  <MarkdownRenderer content={markdown ?? draft.data.markdown} />
+                ) : (
+                  <p>Загрузка Markdown…</p>
+                )}
+              </div>
+            </TabsContent>
+            <TabsContent value="edit">
+              <textarea
+                aria-label="Markdown документа"
+                className="h-[50vh] w-full rounded border p-3 font-mono text-sm"
+                disabled={!draft.data || index.isPending}
+                value={markdown ?? draft.data?.markdown ?? ""}
+                onChange={event => setMarkdown(event.target.value)}
+              />
+            </TabsContent>
+          </Tabs>
           <Button
             disabled={!draft.data || index.isPending}
             onClick={() =>

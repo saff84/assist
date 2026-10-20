@@ -1,4 +1,5 @@
 import { generateEmbeddingVector } from "./embeddingClient";
+import { getCachedSectionChunks } from "./rag/sectionCache";
 import { eq, desc, sql } from "drizzle-orm";
 
 import {
@@ -124,8 +125,6 @@ interface RetrievalResult {
 const BM25_K1 = 1.2;
 const BM25_B = 0.75;
 const TOKEN_CHAR_RATIO = 4;
-const sectionChunksCache = new Map<string, documentDb.ChunkBaseInfo[]>();
-const sectionFetchLocks = new Map<string, Promise<documentDb.ChunkBaseInfo[]>>();
 
 function cosineSimilarity(a: number[], b: number[]): number {
   if (!a.length || !b.length || a.length !== b.length) {
@@ -1299,19 +1298,7 @@ function shouldIncludeNeighbor(
 }
 
 async function getSectionChunks(documentId: number, sectionPath: string) {
-  const cacheKey = `${documentId}:${sectionPath}`;
-  if (sectionChunksCache.has(cacheKey)) {
-    return sectionChunksCache.get(cacheKey)!;
-  }
-  let pending = sectionFetchLocks.get(cacheKey);
-  if (!pending) {
-    pending = documentDb.getChunksInSection(documentId, sectionPath);
-    sectionFetchLocks.set(cacheKey, pending);
-  }
-  const result = await pending;
-  sectionChunksCache.set(cacheKey, result);
-  sectionFetchLocks.delete(cacheKey);
-  return result;
+  return getCachedSectionChunks(documentId, sectionPath, () => documentDb.getChunksInSection(documentId, sectionPath));
 }
 
 function getVariantKey(

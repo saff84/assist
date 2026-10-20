@@ -1,4 +1,5 @@
 import { InstallationDraftButton } from "@/components/InstallationDraftButton";
+import { PassportRepairButton } from "@/components/PassportRepairButton";
 import { useState, useRef, useEffect, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
@@ -481,22 +482,38 @@ export default function DocumentsPage() {
     const showFilename = displayTitle !== doc.filename;
     const canUseDoc = doc.status === "indexed";
     const awaitingReview = doc.status === "processing" && doc.docType === "installation" && doc.processingMessage?.includes("Ожидает проверки");
+    const statusLabel = awaitingReview
+      ? "Ожидает проверки"
+      : doc.status === "indexed"
+        ? ((doc.docType === "passport" || doc.docType === "certificate") && !doc.chunksCount ? "Файл сохранён" : "Проиндексирован")
+        : doc.status === "failed" ? "Ошибка обработки" : "В обработке";
+    const fileSize = doc.fileSize < 1024 * 1024
+      ? `${Math.max(1, Math.round(doc.fileSize / 1024))} КБ`
+      : `${(doc.fileSize / 1024 / 1024).toFixed(2)} МБ`;
 
     return (
-      <Card key={doc.id} className="overflow-hidden">
-        <CardHeader className="py-3">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0 flex-1">
-              <CardTitle className="text-sm font-semibold truncate">
+      <Card key={doc.id} className="min-w-0 overflow-hidden">
+        <CardHeader className="p-4 pb-3">
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              {getStatusIcon(doc.status)}
+              <span>{statusLabel}</span>
+            </div>
+            <div className="min-w-0 space-y-1">
+              <CardTitle className="text-base font-semibold leading-6 [overflow-wrap:anywhere]" title={displayTitle}>
                 {displayTitle}
               </CardTitle>
-              <CardDescription className="text-xs truncate">
-                {showFilename ? doc.filename : `${doc.fileType.toUpperCase()} • ${(doc.fileSize / 1024 / 1024).toFixed(2)}MB`}
-              </CardDescription>
+              {showFilename && (
+                <CardDescription className="text-xs leading-5 [overflow-wrap:anywhere]" title={doc.filename}>
+                  {doc.filename}
+                </CardDescription>
+              )}
             </div>
-            <div className="flex items-center gap-1 shrink-0">
+            <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+              {((doc.docType === "passport" && doc.fileType === "pdf") ||
+                (doc.docType === "installation" && doc.fileType === "md" && (doc.downloadFilename || /^passport-\d+\.md$/.test(doc.filename)))) &&
+                <PassportRepairButton id={doc.id} />}
               {doc.docType === "installation" && doc.fileType === "md" && <InstallationDraftButton id={doc.id} />}
-              {getStatusIcon(doc.status)}
               <Button
                 variant="outline"
                 size="icon"
@@ -505,6 +522,7 @@ export default function DocumentsPage() {
                   window.open(`/api/documents/${doc.id}/file?download=1`, "_blank")
                 }
                 title="Скачать файл"
+                aria-label="Скачать файл"
               >
                 <Download className="h-4 w-4" />
               </Button>
@@ -514,6 +532,7 @@ export default function DocumentsPage() {
                 className="h-8 w-8"
                 onClick={() => setLocation(`/documents/${doc.id}/annotate`)}
                 title="Разметка"
+                aria-label="Разметка"
                 disabled={!canUseDoc}
               >
                 <Tag className="h-4 w-4" />
@@ -524,6 +543,7 @@ export default function DocumentsPage() {
                 className="h-8 w-8"
                 onClick={() => setLocation(`/documents/${doc.id}/visualize`)}
                 title="Визуализация"
+                aria-label="Визуализация"
                 disabled={!canUseDoc}
               >
                 <Grid3x3 className="h-4 w-4" />
@@ -534,6 +554,7 @@ export default function DocumentsPage() {
                 className="h-8 w-8"
                 onClick={() => setLocation(`/documents/${doc.id}`)}
                 title="Детали"
+                aria-label="Детали документа"
               >
                 <Eye className="h-4 w-4" />
               </Button>
@@ -544,19 +565,20 @@ export default function DocumentsPage() {
                 onClick={() => handleDeleteDocument(doc.id)}
                 disabled={deleteDocMutation.isPending}
                 title="Удалить"
+                aria-label="Удалить документ"
               >
                 <Trash2 className="h-4 w-4" />
               </Button>
             </div>
           </div>
         </CardHeader>
-        <CardContent className="pt-0 pb-3">
+        <CardContent className="px-4 pt-0 pb-4">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="outline" className="text-[11px]">
               {doc.fileType.toUpperCase()}
             </Badge>
             <Badge variant="outline" className="text-[11px]">
-              {(doc.fileSize / 1024 / 1024).toFixed(2)}MB
+              {fileSize}
             </Badge>
             <Badge variant="outline" className="text-[11px]">
               Чанков: {doc.chunksCount}
@@ -593,14 +615,14 @@ export default function DocumentsPage() {
             </div>
           )}
 
-          {(doc.status !== "processing" && doc.processingMessage) ? (
-            <div className="mt-2 text-xs text-muted-foreground line-clamp-2">
+          {(doc.status === "failed" && doc.processingMessage && doc.processingMessage !== doc.errorMessage) ? (
+            <div className="mt-2 text-xs text-muted-foreground [overflow-wrap:anywhere]">
               {doc.processingMessage}
             </div>
           ) : null}
 
           {doc.errorMessage ? (
-            <div className="mt-2 text-xs text-destructive line-clamp-2">
+            <div className="mt-2 whitespace-pre-wrap text-xs text-destructive [overflow-wrap:anywhere]">
               {doc.errorMessage}
             </div>
           ) : null}
@@ -1121,7 +1143,7 @@ export default function DocumentsPage() {
                         </Badge>
                       </div>
 
-                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,340px),1fr))] gap-4">
                         {group.docs.map(renderDocumentCard)}
                       </div>
                     </div>
@@ -1133,7 +1155,7 @@ export default function DocumentsPage() {
               .filter((g) => g.docs.length > 0)
               .map((group) => (
                 <TabsContent key={group.key} value={group.key} className="space-y-3">
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                  <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,340px),1fr))] gap-4">
                     {group.docs.map(renderDocumentCard)}
                   </div>
                 </TabsContent>

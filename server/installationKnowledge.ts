@@ -23,8 +23,27 @@ export function passportKnowledgeHash(pdfHash: string | null) {
     .digest("hex");
 }
 
+const convertingPassports = new Set<number>();
+
 /** One derived MD per passport; original PDF remains searchable in Passports. */
-export async function preparePassportKnowledge(passportId: number) {
+export async function preparePassportKnowledge(
+  passportId: number,
+  options: { force?: boolean } = {}
+) {
+  if (convertingPassports.has(passportId))
+    throw new Error("Этот паспорт уже преобразуется в Markdown");
+  convertingPassports.add(passportId);
+  try {
+    return await buildPassportKnowledge(passportId, options);
+  } finally {
+    convertingPassports.delete(passportId);
+  }
+}
+
+async function buildPassportKnowledge(
+  passportId: number,
+  options: { force?: boolean }
+) {
   const passport = await documentDb.getDocumentById(passportId);
   if (!passport || passport.docType !== "passport")
     throw new Error("Паспорт не найден");
@@ -34,6 +53,7 @@ export async function preparePassportKnowledge(passportId: number) {
     d => d.docType === "installation" && d.filename === filename
   );
   if (
+    !options.force &&
     derived?.contentHash === conversionHash &&
     derived.status !== "failed" &&
     fs.existsSync(installationPath(derived.id, filename))
@@ -109,6 +129,10 @@ export async function indexInstallationMarkdown(id: number, markdown?: string) {
       throw new Error("Документ Markdown не найден");
     const passportMatch = /^passport-(\d+)\.md$/.exec(doc.filename);
     if (passportMatch && doc.syncSourceId != null) {
+      if (convertingPassports.has(Number(passportMatch[1])))
+        throw new Error(
+          "Паспорт ещё преобразуется в Markdown. Дождитесь завершения."
+        );
       const source = await documentDb.getDocumentById(Number(passportMatch[1]));
       if (!source || source.status !== "indexed")
         throw new Error(

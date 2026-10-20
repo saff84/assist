@@ -4,7 +4,7 @@ import { createRequire } from "module";
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { TextItem, PDFPageProxy } from "pdfjs-dist/types/src/display/api";
 
-export const PDF_MARKDOWN_VERSION = "layout-v2";
+export const PDF_MARKDOWN_VERSION = "layout-v3";
 const require = createRequire(import.meta.url);
 const pdfjsRoot = path.dirname(require.resolve("pdfjs-dist/package.json"));
 export type PdfWord = {
@@ -23,6 +23,7 @@ type Table = {
   bottom: number;
   xs: number[];
   ys: number[];
+  grid: GridLine[];
 };
 const cell = (s: string) => s.replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
 function unique(values: number[]): number[] {
@@ -240,6 +241,7 @@ function findTables(lines: GridLine[]): Table[] {
         bottom: ys[ys.length - 1],
         xs,
         ys,
+        grid: group,
       });
   }
   return tables;
@@ -267,28 +269,54 @@ function tableMarkdown(table: Table, words: PdfWord[]): string | null {
     row.map(items => positionedText(items).replace(/\n/g, " "))
   );
   if (values.length < 2 || values[0].filter(Boolean).length < 2) return null;
-  let headerCount = 1;
-  if (table.xs.length > 3) {
-    const firstData = values.findIndex(
-      (row, i) =>
-        i > 0 &&
-        /^\d{3,}/.test(row[0]) &&
-        row.filter(v => /\d/.test(v)).length >= 2
+  const numeric = (value: string) =>
+    /^[+−-]?\d+(?:[.,]\d+)?$/.test(value.trim());
+  const firstData = values.findIndex((row, i) => {
+    const filled = row.filter(value => value.trim());
+    return (
+      i > 0 &&
+      numeric(row[0]) &&
+      filled.filter(numeric).length >= Math.max(2, Math.ceil(filled.length / 2))
     );
-    if (firstData > 0 && firstData <= 3) headerCount = firstData;
-  }
+  });
+  const headerCount = firstData > 0 && firstData <= 6 ? firstData : 1;
+
+  // A label in a horizontally merged PDF cell belongs to every leaf column
+  // under that cell. Use missing vertical borders, not empty text, to infer spans.
+  const headerRows = values.slice(0, headerCount).map((row, rowIndex) => {
+    const expanded = [...row];
+    const middleY = (table.ys[rowIndex] + table.ys[rowIndex + 1]) / 2;
+    const hasBorder = (column: number) =>
+      table.grid.some(
+        line =>
+          line.x2 - line.x1 < 1 &&
+          Math.abs(line.x1 - table.xs[column]) < 2 &&
+          line.y1 <= middleY + 1 &&
+          line.y2 >= middleY - 1
+      );
+    let start = 0;
+    for (let end = 1; end <= row.length; end++) {
+      if (end < row.length && !hasBorder(end)) continue;
+      const items = rows[rowIndex].slice(start, end).flat();
+      const label = positionedText(items).replace(/\n/g, " ");
+      for (let column = start; column < end; column++) expanded[column] = label;
+      start = end;
+    }
+    return expanded;
+  });
   const counts = new Map<string, number>();
   const headers = values[0].map((_, column) => {
-    const name =
-      values
-        .slice(0, headerCount)
-        .map(row => row[column])
-        .filter(Boolean)
-        .join(" ") || `Колонка ${column + 1}`;
+    const name = headerRows
+      .map(row => row[column])
+      .filter(Boolean)
+      .join(" · ");
     const count = (counts.get(name) ?? 0) + 1;
     counts.set(name, count);
     return count === 1 ? name : `${name} (${count})`;
   });
+  // An unknown heading must not become an invented "Column N" technical field.
+  // Leave this region as source text when its column meaning cannot be recovered.
+  if (headers.some(header => !header.trim())) return null;
   return [
     `| ${headers.map(cell).join(" | ")} |`,
     `| ${headers.map(() => "---").join(" | ")} |`,

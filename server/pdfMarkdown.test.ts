@@ -173,6 +173,126 @@ describe("lossless PDF to Markdown", () => {
     ).toBe("16");
   });
 
+  it("flattens three header levels and merged size groups, including decimal-flow continuation rows", async () => {
+    const fixture = (flows: string[], data: string[][]) => {
+      const xs = Array.from({ length: 11 }, (_, i) => 50 + i * 100);
+      const ys = [700, 670, 640, 610, 580, 550];
+      const grid: GridLine[] = xs.map((x, i) => ({
+        x1: x,
+        x2: x,
+        y1: 550,
+        y2: [0, 1, 4, 7, 10].includes(i) ? 700 : 670,
+      }));
+      ys.forEach((y, i) =>
+        grid.push({ x1: i === 1 ? 150 : 50, x2: 1050, y1: y, y2: y })
+      );
+      const words: PdfWord[] = [];
+      const add = (value: string, column: number, row: number, span = 1) => {
+        words.push(
+          word(
+            words.length,
+            value,
+            xs[column] + span * 50 - value.length * 2.5,
+            680 - row * 30
+          )
+        );
+      };
+      add("Расход", 0, 0);
+      ["16 x 2,2", "20 x 2,8", "25 x 3,5"].forEach((size, i) =>
+        add(size, 1 + i * 3, 0, 3)
+      );
+      [
+        "v",
+        "20 °C",
+        "80 °C",
+        "v",
+        "20 °C",
+        "80 °C",
+        "v",
+        "20 °C",
+        "80 °C",
+      ].forEach((label, i) => add(label, i + 1, 1));
+      [
+        "л/с",
+        "м/с",
+        "Па/м",
+        "Па/м",
+        "м/с",
+        "Па/м",
+        "Па/м",
+        "м/с",
+        "Па/м",
+        "Па/м",
+      ].forEach((unit, i) => add(unit, i, 2));
+      data.forEach((row, r) =>
+        [flows[r], ...row].forEach((value, c) => add(value, c, r + 3))
+      );
+      return layoutPageToMarkdown(words, grid);
+    };
+    const first = fixture(
+      ["0,01", "0,02"],
+      [
+        ["0,09", "23", "16", "0,06", "10", "6", "0,04", "4", "1"],
+        ["0,19", "45", "54", "0,12", "19", "19", "0,08", "8", "7"],
+      ]
+    );
+    const continuation = fixture(
+      ["0.05", "0.06"],
+      [
+        ["0,47", "355", "279", "0,31", "127", "96", "0,20", "44", "33"],
+        ["0,57", "489", "387", "0,37", "175", "136", "0,24", "61", "46"],
+      ]
+    );
+    expect(first.tables).toBe(1);
+    expect(continuation.tables).toBe(1);
+    expect(first.markdown).not.toContain("Колонка");
+    expect(first.markdown).toContain("16 x 2,2 · 20 °C · Па/м");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hydraulic-md-"));
+    try {
+      const file = path.join(dir, "result.md");
+      fs.writeFileSync(
+        file,
+        `## Страница 4\n\n${first.markdown}\n\n## Страница 5\n\nПродолжение таблицы 2\n\n${continuation.markdown}`
+      );
+      const parsed = await parseMarkdownDocument(file);
+      const tables = parsed.elements.filter(
+        element => element.elementType === "table"
+      );
+      expect(tables).toHaveLength(2);
+      expect(tables[0].tableRows).toHaveLength(2);
+      expect(Object.keys(tables[0].tableRows![0])).toHaveLength(10);
+      expect(tables[0].tableRows![0]["16 x 2,2 · 80 °C · Па/м"]).toBe("16");
+      expect(tables[1].tableRows![0]["Расход · л/с"]).toBe("0.05");
+      expect(tables[1].tableRows![0]["16 x 2,2 · 20 °C · Па/м"]).toBe("355");
+      expect(Object.keys(tables[1].tableRows![0])).toEqual(
+        Object.keys(tables[0].tableRows![0])
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps source text instead of inventing names for unknown columns", () => {
+    const grid: GridLine[] = [50, 250, 500].map(x => ({
+      x1: x,
+      x2: x,
+      y1: 600,
+      y2: 700,
+    }));
+    [600, 650, 700].forEach(y => grid.push({ x1: 50, x2: 500, y1: y, y2: y }));
+    const result = layoutPageToMarkdown(
+      [
+        word(0, "Known", 55, 680),
+        word(1, "Entry", 55, 630),
+        word(2, "123", 255, 630),
+      ],
+      grid
+    );
+    expect(result.tables).toBe(0);
+    expect(result.markdown).toContain("123");
+    expect(result.markdown).not.toContain("Колонка");
+  });
+
   it("rejects an image-only PDF instead of publishing empty knowledge", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "passport-scan-"));
     try {

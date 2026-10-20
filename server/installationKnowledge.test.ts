@@ -23,7 +23,7 @@ vi.mock("./documentDb", () => ({
 }));
 vi.mock("./pdfMarkdown", () => ({
   pdfToMarkdown: vi.fn(),
-  PDF_MARKDOWN_VERSION: "layout-v2",
+  PDF_MARKDOWN_VERSION: "layout-v3",
 }));
 vi.mock("./documentProcessor", () => ({ processDocument: vi.fn() }));
 vi.mock("./embeddingClient", () => ({ generateEmbeddingVector: vi.fn() }));
@@ -112,6 +112,17 @@ describe("installation knowledge lifecycle", () => {
     expect(pdfToMarkdown).not.toHaveBeenCalled();
     expect(docs.deleteDocumentChunks).not.toHaveBeenCalled();
   });
+  it("forces rebuilding and removes old chunks even when the converter and PDF hashes match", async () => {
+    vi.mocked(docs.getAllDocuments).mockResolvedValue([
+      { ...derived, contentHash: passportKnowledgeHash("new") },
+    ] as any);
+    expect(await preparePassportKnowledge(10, { force: true })).toEqual({
+      id: 20,
+      state: "review",
+    });
+    expect(pdfToMarkdown).toHaveBeenCalled();
+    expect(docs.deleteDocumentChunks).toHaveBeenCalledWith(20);
+  });
   it("rebuilds legacy Markdown even when the PDF has not changed", async () => {
     vi.mocked(docs.getAllDocuments).mockResolvedValue([
       { ...derived, contentHash: "new" },
@@ -143,6 +154,11 @@ describe("installation knowledge lifecycle", () => {
     expect(docs.insertDocumentChunks).toHaveBeenCalledWith([
       expect.objectContaining({ pageNumber: 3, embedding: "[1,2]" }),
     ]);
+    expect(
+      vi.mocked(docs.deleteDocumentChunks).mock.invocationCallOrder[0]
+    ).toBeLessThan(
+      vi.mocked(docs.insertDocumentChunks).mock.invocationCallOrder[0]
+    );
     expect(docs.updateDocumentSyncRecord).toHaveBeenCalledWith(
       20,
       expect.objectContaining({ status: "indexed" })

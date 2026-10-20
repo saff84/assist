@@ -1,4 +1,5 @@
 import { getDb } from "./db";
+import { invalidateDocumentSectionCache } from "./rag/sectionCache";
 import { documents, documentChunks, systemPrompts, chatHistory, queryStats, sections, products, documentAnnotations, productGroups, productItems, manualRegions } from "../drizzle/schema";
 import { eq, desc, and, gte, sql, asc, or, inArray } from "drizzle-orm";
 import type { InsertDocument, InsertDocumentChunk, InsertSystemPrompt, InsertSection, InsertProduct, InsertDocumentAnnotation, InsertProductGroup, InsertProductItem, InsertManualRegion } from "../drizzle/schema";
@@ -170,7 +171,9 @@ export async function deleteDocumentChunks(documentId: number): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  invalidateDocumentSectionCache(documentId);
   await db.delete(documentChunks).where(eq(documentChunks.documentId, documentId));
+  invalidateDocumentSectionCache(documentId);
 }
 
 export async function deleteDocumentAnnotations(documentId: number): Promise<void> {

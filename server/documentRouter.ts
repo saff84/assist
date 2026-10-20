@@ -1,4 +1,5 @@
 import fs from "fs";
+import { startPassportRepair, getPassportRepairStatus } from "./passportRepair";
 import { installationPath, indexInstallationMarkdown } from "./installationKnowledge";
 ﻿import { router, publicProcedure, protectedProcedure, knowledgeProcedure } from "./_core/trpc";
 import { z } from "zod";
@@ -28,6 +29,10 @@ import * as syncSourcesDb from "./knowledgeSyncSourcesDb";
  */
 
 export const documentRouter = router({
+  repairPassportKnowledge: knowledgeProcedure.input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ input }) => startPassportRepair(input.id)),
+  getPassportRepairStatus: knowledgeProcedure.input(z.object({ jobId: z.string().max(80) }))
+    .query(({ input }) => getPassportRepairStatus(input.jobId)),
   getInstallationDraft: knowledgeProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
     const doc = await documentDb.getDocumentById(input.id);
     if (!doc || doc.docType !== "installation" || doc.fileType !== "md") throw new TRPCError({ code: "NOT_FOUND", message: "Markdown не найден" });
