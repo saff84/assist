@@ -54,6 +54,25 @@ const word = (id: number, value: string, x: number, y: number): PdfWord => ({
 });
 
 describe("lossless PDF to Markdown", () => {
+  it("expands centred vertical cells within their real borders and separates framed notes", () => {
+    const grid: GridLine[] = [];
+    [50, 150, 250].forEach(x => grid.push({x1:x,x2:x,y1:400,y2:700}));
+    [700,650,500,400].forEach(y => grid.push({x1:50,x2:250,y1:y,y2:y}));
+    [600,550,450].forEach(y => grid.push({x1:50,x2:150,y1:y,y2:y}));
+    // The following two full-width cells are explanations, not data columns.
+    grid.push({x1:50,x2:50,y1:300,y2:400}, {x1:250,x2:250,y1:300,y2:400});
+    [350,300].forEach(y => grid.push({x1:50,x2:250,y1:y,y2:y}));
+    const words = [word(0,"SKU",55,675),word(1,"Diameter",155,675),
+      word(2,"2182",55,625),word(3,"2183",55,575),word(4,"2187",55,525),
+      word(5,"16",155,575),word(6,"2281",55,475),word(7,"2282",55,425),
+      word(8,"20",155,450),word(9,"Notes follow",55,375),word(10,"END",55,325)];
+    const result=layoutPageToMarkdown(words,grid);
+    expect(result.tables).toBe(1);
+    for(const sku of ["2182","2183","2187"]) expect(result.markdown).toContain(`| ${sku} | 16 |`);
+    for(const sku of ["2281","2282"]) expect(result.markdown).toContain(`| ${sku} | 20 |`);
+    expect(result.markdown).toContain("\n\nNotes follow\n\nEND");
+    expect(result.markdown).not.toContain("| Notes follow");
+  });
   it("rejects silent loss of the final sentence", () => {
     expect(() =>
       assertPdfTextCoverage(

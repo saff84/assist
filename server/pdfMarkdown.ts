@@ -4,7 +4,7 @@ import { createRequire } from "module";
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { TextItem, PDFPageProxy } from "pdfjs-dist/types/src/display/api";
 
-export const PDF_MARKDOWN_VERSION = "layout-v3";
+export const PDF_MARKDOWN_VERSION = "layout-v4";
 const require = createRequire(import.meta.url);
 const pdfjsRoot = path.dirname(require.resolve("pdfjs-dist/package.json"));
 export type PdfWord = {
@@ -225,9 +225,20 @@ function findTables(lines: GridLine[]): Table[] {
       });
     }
     const xs = unique(group.filter(l => l.x2 - l.x1 < 1).map(l => l.x1));
-    const ys = unique(
+    let ys = unique(
       group.filter(l => l.y2 - l.y1 < 1).map(l => l.y1)
     ).reverse();
+    // Full-width notes can share the outer frame with a table. They have no
+    // internal column borders and must remain prose outside the data grid.
+    while (ys.length > 2) {
+      const middle = (ys[ys.length - 2] + ys[ys.length - 1]) / 2;
+      const divided = group.some(line =>
+        line.x2 - line.x1 < 1 && line.x1 > xs[0] + 2 &&
+        line.x1 < xs[xs.length - 1] - 2 &&
+        line.y1 <= middle + 1 && line.y2 >= middle - 1);
+      if (divided) break;
+      ys = ys.slice(0, -1);
+    }
     if (
       xs.length >= 3 &&
       ys.length >= 3 &&
@@ -276,10 +287,42 @@ function tableMarkdown(table: Table, words: PdfWord[]): string | null {
     return (
       i > 0 &&
       numeric(row[0]) &&
-      filled.filter(numeric).length >= Math.max(2, Math.ceil(filled.length / 2))
+      filled.filter(numeric).length >= Math.max(1, Math.ceil(filled.length / 2))
     );
   });
   const headerCount = firstData > 0 && firstData <= 6 ? firstData : 1;
+
+  // Reconstruct physical body cells from missing borders. A vertically centred
+  // value belongs to the whole merged cell, including rows above its baseline.
+  // Never infer a span merely because a neighbouring text value is empty.
+  const seen = new Set<string>();
+  for (let r = headerCount; r < rows.length; r++) {
+    for (let c = 0; c < rows[r].length; c++) {
+      const key = `${r}:${c}`;
+      if (seen.has(key)) continue;
+      const queue: Array<[number, number]> = [[r, c]];
+      const region: Array<[number, number]> = [];
+      seen.add(key);
+      while (queue.length) {
+        const [row, col] = queue.pop()!;
+        region.push([row, col]);
+        for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+          const nr = row + dr, nc = col + dc;
+          if (nr < headerCount || nr >= rows.length || nc < 0 || nc >= rows[row].length) continue;
+          const nextKey = `${nr}:${nc}`;
+          if (seen.has(nextKey)) continue;
+          const x = dc ? table.xs[Math.max(col, nc)] : (table.xs[col] + table.xs[col + 1]) / 2;
+          const y = dr ? table.ys[Math.max(row, nr)] : (table.ys[row] + table.ys[row + 1]) / 2;
+          const border = table.grid.some(line => dc
+            ? line.x2 - line.x1 < 1 && Math.abs(line.x1 - x) < 2 && line.y1 <= y + 1 && line.y2 >= y - 1
+            : line.y2 - line.y1 < 1 && Math.abs(line.y1 - y) < 2 && line.x1 <= x + 1 && line.x2 >= x - 1);
+          if (!border) { seen.add(nextKey); queue.push([nr, nc]); }
+        }
+      }
+      const label = positionedText(region.flatMap(([row, col]) => rows[row][col])).replace(/\n/g, " ");
+      for (const [row, col] of region) values[row][col] = label;
+    }
+  }
 
   // A label in a horizontally merged PDF cell belongs to every leaf column
   // under that cell. Use missing vertical borders, not empty text, to infer spans.
@@ -320,7 +363,9 @@ function tableMarkdown(table: Table, words: PdfWord[]): string | null {
   return [
     `| ${headers.map(cell).join(" | ")} |`,
     `| ${headers.map(() => "---").join(" | ")} |`,
-    ...values.slice(headerCount).map(row => `| ${row.map(cell).join(" | ")} |`),
+    ...values.slice(headerCount)
+      .filter((_, i) => rows[i + headerCount].some(items => items.length > 0))
+      .map(row => `| ${row.map(cell).join(" | ")} |`),
   ].join("\n");
 }
 
