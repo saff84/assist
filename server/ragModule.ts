@@ -3717,7 +3717,13 @@ export async function processRAGQuery(
           fullContent = manualContent;
         }
       } else {
-        const tableData = await resolveTableData(chunk, sectionPath);
+        // Tables from neighbouring chunks can belong to a different topic.
+        // Expand them only for an explicit catalog/table request; otherwise use
+        // only the data actually attached to this retrieved chunk.
+        const directTable = metadata.tableJson || (chunk as any)?.tableJson;
+        const tableData = intents.catalog && !intents.installation && queryWantsTables(ragQuery.query)
+          ? await resolveTableData(chunk, sectionPath)
+          : Array.isArray(directTable) ? directTable : null;
         if (tableData && Array.isArray(tableData) && tableData.length > 0) {
         const tableLabel =
           detectTableHeading(fullContent) || detectTableHeading(chunk.content);
@@ -3831,7 +3837,7 @@ export async function processRAGQuery(
   const { sources, chunks } = mapSourcesForResponse(usedSources);
   const attachments = await buildAttachmentsForSources(usedSources, retrieval.documentMeta);
 
-  if (quickResponsesEnabled && catalogBlockIntent && confidentSource) {
+  if (quickResponsesEnabled && !intents.installation && catalogBlockIntent && confidentSource) {
     const block = extractCatalogBlockByIntent(confidentSource, catalogBlockIntent);
     if (block) {
       const mapped = mapSourcesForResponse([confidentSource]);
@@ -3848,7 +3854,7 @@ export async function processRAGQuery(
     }
   }
 
-  if (quickResponsesEnabled && productOnlyQuick && confidentSource) {
+  if (quickResponsesEnabled && !intents.installation && productOnlyQuick && confidentSource) {
     const rawAnswer = buildRawAnswerFromSources([confidentSource], {
       allowTables: true,
     });
@@ -3869,6 +3875,7 @@ export async function processRAGQuery(
 
   if (
     quickResponsesEnabled &&
+    !intents.installation &&
     !intents.catalog &&
     !catalogBlockIntent &&
     !requestedCatalogAttribute &&
@@ -3906,7 +3913,7 @@ export async function processRAGQuery(
     primaryDocType === "certificate" ||
     primaryDocType === "warranty_faq";
   const catalogFastPath = false;
-  if (quickResponsesEnabled && (specialDoc || catalogFastPath)) {
+  if (quickResponsesEnabled && !intents.installation && (specialDoc || catalogFastPath)) {
     const allowTables = queryWantsTables(ragQuery.query);
     const topSource = fullUsedSources[0];
     if (primaryDocType === "warranty_faq" && topSource?.chunkContent) {
@@ -3950,7 +3957,7 @@ export async function processRAGQuery(
   // The default user message is heavily catalog/instruction-oriented.
   // For passports/certificates/FAQ we use a simpler instruction set.
   const wantsTables = queryWantsTables(ragQuery.query);
-  const userMessage =
+  const sourceMessage =
     specialDoc
       ? `Задача: ответить на вопрос пользователя строго на основе источников ниже.
 Пиши «нет информации» ТОЛЬКО если источники ниже не содержат данных по теме.
@@ -3979,6 +3986,13 @@ ${context.context}
 
 Ответ (на русском языке):`
       : buildUserMessage(context.context, ragQuery.query);
+  const userMessage = sourceMessage + `
+
+ОБЯЗАТЕЛЬНОЕ УТОЧНЕНИЕ ОБЛАСТИ ОТВЕТА:
+Дай развёрнутый ответ строго по заданной теме. Полнота означает все относящиеся к вопросу условия, шаги, ограничения и числовые значения, а не все данные из найденного документа.
+Не добавляй номенклатуру, гарантии, маркировку и таблицы характеристик, если они не нужны для ответа на заданный вопрос. Не копируй служебные метки «Товар:», номера чанков и заголовки страниц.
+Для монтажа используй относящиеся к монтажу разделы инструкций и технических паспортов, включая продолжения списков на следующих страницах. Сохраняй последовательность, температуры, единицы измерения и предупреждения. Оформи ответ связным объяснением и списком требований.
+Если данных по теме недостаточно, явно укажи, чего именно не хватает. Не заполняй ответ посторонними разделами. Это уточнение имеет приоритет над указаниями выше о выводе всех таблиц и всех строк.`;
 
   // Debug logging: log user message preview
   if (config.logging?.enabled) {
@@ -4006,6 +4020,7 @@ ${context.context}
     intents.catalog && queryWantsTables(ragQuery.query) ? 4096 : 0
   );
 
+  console.log(`[RAG] Answer generation: LLM, installation=${intents.installation}, sources=${context.usedSources.length}`);
   const llmResponse = await invokeLLM({
     model: config.llm.model,
     messages: [
@@ -4041,26 +4056,16 @@ ${context.context}
     /(?:\s|—|-|,|:|;|\()\s*$/.test(messageContent.trim()) ||
     /(?:при|для|и|или|в|на|по|с|со|к|от|до)\s*$/i.test(messageContent.trim());
 
-  // If model refused or cut off while we have retrieved instruction/catalog chunks,
-  // fall back to the full retrieved source text instead of a stub answer.
+  // Preserve the model answer. Dumping retrieved chunks here substitutes
+  // unrelated source material for an answer to the user's actual question.
   if (
     usedSources.length > 0 &&
     (looksEmptyRefusal || looksTruncated) &&
     (!specialDoc || forcedDocType === "instruction" || intents.installation)
   ) {
-    const fallbackRaw = buildRawAnswerFromSources(usedSources, {
-      allowTables: true,
-    });
-    if (fallbackRaw && fallbackRaw.trim().length > messageContent.trim().length) {
-      console.warn(
-        `[RAG] Replacing incomplete LLM answer (refusal=${looksEmptyRefusal}, truncated=${looksTruncated}, finish=${finishReason || "n/a"}) with raw sources (${fallbackRaw.length} chars).`
-      );
-      messageContent = fallbackRaw;
-    } else if (looksEmptyRefusal && fallbackRaw) {
-      console.warn(
-        `[RAG] Replacing false "no information" answer with raw sources.`
-      );
-      messageContent = fallbackRaw;
+    console.warn(`[RAG] LLM answer needs review: refusal=${looksEmptyRefusal}, truncated=${looksTruncated}, finish=${finishReason || "n/a"}; raw sources were not substituted.`);
+    if (finishReason === "length") {
+      messageContent += "\n\nОтвет достиг ограничения длины. Для полного продолжения уточните интересующий этап.";
     }
   }
 
@@ -4068,7 +4073,7 @@ ${context.context}
   // When user specifies an article (4–6 digits) or a single attribute, don't append full tables.
   const explicitArticle = hasExplicitArticleInQuery(ragQuery.query);
   const allowAutoTables =
-    (!specialDoc || wantsTables) && !requestedCatalogAttribute && !explicitArticle;
+    wantsTables && !requestedCatalogAttribute && !explicitArticle;
   if (allowAutoTables) {
     messageContent = ensureTablesInResponse(messageContent, usedSources, {
       // For mounting answers the model usually already rendered tables;
