@@ -3,8 +3,9 @@ import path from "path";
 import { createRequire } from "module";
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { TextItem, PDFPageProxy } from "pdfjs-dist/types/src/display/api";
+import { mergeContinuedTables } from "./mergeContinuedTables";
 
-export const PDF_MARKDOWN_VERSION = "layout-v4";
+export const PDF_MARKDOWN_VERSION = "layout-v5";
 const require = createRequire(import.meta.url);
 const pdfjsRoot = path.dirname(require.resolve("pdfjs-dist/package.json"));
 export type PdfWord = {
@@ -492,7 +493,7 @@ export async function pdfToMarkdown(
       throw new Error(
         "В PDF недостаточно распознаваемого текста. Требуется OCR или подготовленный Markdown."
       );
-    return (
+    return mergeContinuedTables(
       [
         `<!-- pdf-markdown:${PDF_MARKDOWN_VERSION} -->`,
         `# ${title.replace(/[\r\n]/g, " ")}`,

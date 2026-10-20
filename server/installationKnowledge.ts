@@ -41,7 +41,7 @@ export function hasSamePassportSource(
   if (typeof savedSource === "string") return savedSource === pdfHash;
   return (
     derived.contentHash === pdfHash ||
-    ["layout-v1", "layout-v2", "layout-v3", PDF_MARKDOWN_VERSION].some(
+    ["layout-v1", "layout-v2", "layout-v3", "layout-v4", PDF_MARKDOWN_VERSION].some(
       version =>
         derived.contentHash ===
         crypto
