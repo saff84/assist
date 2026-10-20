@@ -7,6 +7,10 @@ import { processDocument } from "./documentProcessor";
 import { generateEmbeddingVector } from "./embeddingClient";
 import { tokenize, createStopwordSet } from "./rag/textProcessing";
 import { getRagConfig } from "./rag/config";
+import {
+  saveInstallationReview,
+  type ReviewKind,
+} from "./installationReviewStore";
 
 export function installationPath(id: number, filename: string) {
   return path.resolve(
@@ -21,6 +25,31 @@ export function passportKnowledgeHash(pdfHash: string | null) {
     .createHash("sha256")
     .update(`${PDF_MARKDOWN_VERSION}:${pdfHash ?? ""}`)
     .digest("hex");
+}
+
+/** Converter upgrades must not erase a reviewed MD or the user's draft edits. */
+export function hasSamePassportSource(
+  derived: {
+    contentHash: string | null;
+    documentMetadata?: { customFields?: Record<string, any> } | null;
+  },
+  pdfHash: string | null
+) {
+  if (!pdfHash) return false;
+  const savedSource =
+    derived.documentMetadata?.customFields?.installationSourceHash;
+  if (typeof savedSource === "string") return savedSource === pdfHash;
+  return (
+    derived.contentHash === pdfHash ||
+    ["layout-v1", "layout-v2", "layout-v3", PDF_MARKDOWN_VERSION].some(
+      version =>
+        derived.contentHash ===
+        crypto
+          .createHash("sha256")
+          .update(`${version}:${pdfHash}`)
+          .digest("hex")
+    )
+  );
 }
 
 const convertingPassports = new Set<number>();
@@ -54,10 +83,41 @@ async function buildPassportKnowledge(
   );
   if (
     !options.force &&
-    derived?.contentHash === conversionHash &&
-    derived.status !== "failed" &&
+    derived &&
+    hasSamePassportSource(derived, passport.contentHash) &&
     fs.existsSync(installationPath(derived.id, filename))
   ) {
+    if (derived.status === "failed")
+      throw new Error(
+        `MD сохранён; требуется исправить ошибку обработки: ${derived.errorMessage || "ошибка индексации"}`
+      );
+    if (!derived.documentMetadata?.customFields?.installationSourceHash) {
+      const metadata = derived.documentMetadata ?? {};
+      const markdown = fs.readFileSync(
+        installationPath(derived.id, filename),
+        "utf8"
+      );
+      const converter =
+        /pdf-markdown:([^\s>]+)/.exec(markdown)?.[1] ?? "legacy";
+      const review =
+        derived.status === "indexed"
+          ? saveInstallationReview(
+              derived.id,
+              markdown,
+              passport.contentHash,
+              converter,
+              "legacy"
+            )
+          : metadata.customFields?.installationReview;
+      await documentDb.updateDocumentMetadata(derived.id, {
+        ...metadata,
+        customFields: {
+          ...metadata.customFields,
+          installationSourceHash: passport.contentHash,
+          installationReview: review,
+        },
+      });
+    }
     return {
       id: derived.id,
       state: derived.status === "indexed" ? "indexed" : "review",
@@ -67,6 +127,27 @@ async function buildPassportKnowledge(
     throw new Error(
       "Документ индексируется. Повторите синхронизацию после завершения."
     );
+  let previousReview =
+    derived?.documentMetadata?.customFields?.installationReview ??
+    derived?.documentMetadata?.customFields?.previousInstallationReview;
+  if (
+    derived &&
+    (derived.status === "indexed" ||
+      derived.documentMetadata?.customFields?.installationReview) &&
+    fs.existsSync(installationPath(derived.id, filename))
+  ) {
+    previousReview = saveInstallationReview(
+      derived.id,
+      fs.readFileSync(installationPath(derived.id, filename), "utf8"),
+      derived.documentMetadata?.customFields?.installationSourceHash ??
+        (hasSamePassportSource(derived, passport.contentHash)
+          ? passport.contentHash
+          : null),
+      derived.documentMetadata?.customFields?.installationConverterVersion ??
+        "legacy",
+      "legacy"
+    );
+  }
   if (derived)
     await documentDb.updateDocumentStatus(
       derived.id,
@@ -110,6 +191,18 @@ async function buildPassportKnowledge(
     processingMessage:
       "Markdown готов. Проверьте текст и нажмите «Индексировать».",
   });
+  const metadata = derived?.documentMetadata ?? {};
+  await documentDb.updateDocumentMetadata(id, {
+    ...metadata,
+    customFields: {
+      ...metadata.customFields,
+      installationSourceHash: passport.contentHash,
+      installationConverterVersion: PDF_MARKDOWN_VERSION,
+      installationRequiresReview: true,
+      installationReview: undefined,
+      previousInstallationReview: previousReview,
+    },
+  });
   await documentDb.updateDocumentProgress(
     id,
     "chunking",
@@ -120,7 +213,11 @@ async function buildPassportKnowledge(
 }
 
 const indexing = new Set<number>();
-export async function indexInstallationMarkdown(id: number, markdown?: string) {
+export async function indexInstallationMarkdown(
+  id: number,
+  markdown?: string,
+  options: { reviewKind?: ReviewKind } = {}
+) {
   if (indexing.has(id)) throw new Error("Документ уже индексируется");
   indexing.add(id);
   try {
@@ -128,12 +225,15 @@ export async function indexInstallationMarkdown(id: number, markdown?: string) {
     if (!doc || doc.docType !== "installation" || doc.fileType !== "md")
       throw new Error("Документ Markdown не найден");
     const passportMatch = /^passport-(\d+)\.md$/.exec(doc.filename);
+    let sourcePdfHash: string | null =
+      doc.documentMetadata?.customFields?.installationSourceHash ?? null;
     if (passportMatch && doc.syncSourceId != null) {
       if (convertingPassports.has(Number(passportMatch[1])))
         throw new Error(
           "Паспорт ещё преобразуется в Markdown. Дождитесь завершения."
         );
       const source = await documentDb.getDocumentById(Number(passportMatch[1]));
+      sourcePdfHash = source?.contentHash ?? sourcePdfHash;
       if (!source || source.status !== "indexed")
         throw new Error(
           "Исходный паспорт недоступен. Сначала выполните синхронизацию источника."
@@ -151,6 +251,26 @@ export async function indexInstallationMarkdown(id: number, markdown?: string) {
     const processed = await processDocument(filePath, "installation");
     if (!processed.chunks.length)
       throw new Error("В Markdown нет данных для индексации");
+    const indexedMarkdown = fs.readFileSync(filePath, "utf8");
+    const review = saveInstallationReview(
+      id,
+      indexedMarkdown,
+      sourcePdfHash,
+      /pdf-markdown:([^\s>]+)/.exec(indexedMarkdown)?.[1] ?? "legacy",
+      options.reviewKind ?? (markdown === undefined ? "repair" : "manual")
+    );
+    const reviewedMetadata = {
+      ...doc.documentMetadata,
+      ...processed.documentMetadata,
+      customFields: {
+        ...doc.documentMetadata?.customFields,
+        installationSourceHash: sourcePdfHash,
+        installationReview: review,
+        installationRequiresReview: false,
+      },
+    };
+    // Approval is durable independently of embedding-service availability.
+    await documentDb.updateDocumentMetadata(id, reviewedMetadata);
     const records = [];
     const stopwords = createStopwordSet(
       getRagConfig().retrieval.stopwords.extra ?? []
@@ -196,15 +316,11 @@ export async function indexInstallationMarkdown(id: number, markdown?: string) {
         pageEnd: section.pageEnd ?? null,
       }))
     );
-    await documentDb.updateDocumentMetadata(
-      id,
-      processed.documentMetadata ?? {},
-      {
-        docType: "installation",
-        pages: processed.numPages,
-        toc: processed.sections ?? [],
-      }
-    );
+    await documentDb.updateDocumentMetadata(id, reviewedMetadata, {
+      docType: "installation",
+      pages: processed.numPages,
+      toc: processed.sections ?? [],
+    });
     await documentDb.updateDocumentChunksCount(id, records.length);
     await documentDb.updateDocumentSyncRecord(id, {
       status: "indexed",

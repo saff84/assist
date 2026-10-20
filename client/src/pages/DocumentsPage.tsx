@@ -1,5 +1,7 @@
 import { InstallationDraftButton } from "@/components/InstallationDraftButton";
 import { PassportRepairButton } from "@/components/PassportRepairButton";
+import { ReviewRecoveryButton } from "@/components/ReviewRecoveryButton";
+import { canRecoverInstallationReview } from "@shared/documentReview";
 import { useState, useRef, useEffect, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
@@ -28,6 +30,7 @@ type ProcessingType =
   | "manual";
 
 export default function DocumentsPage() {
+  const [recoveringReviews, setRecoveringReviews] = useState(false);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [processingType, setProcessingType] = useState<ProcessingType>("general");
@@ -403,11 +406,12 @@ export default function DocumentsPage() {
       certificate: { title: "Сертификаты", icon: Eye, hint: "Поиск файла по названию (синхронизация / загрузка)" },
       warranty_faq: { title: "FAQ по гарантии", icon: Grid3x3, hint: "Вопрос–ответ по гарантийным обращениям" },
       general: { title: "Общие документы", icon: FileText, hint: "Прочие документы" },
+      company: { title: "О компании", icon: BookOpen, hint: "Материалы о компании" },
     } as const;
   }, []);
 
   const filteredDocuments = useMemo(() => {
-    const list = documents ?? [];
+    const list = [...(documents ?? [])].sort((a, b) => Number(b.status === "failed") - Number(a.status === "failed"));
     const q = search.trim().toLowerCase();
     if (!q) return list;
     return list.filter((d) => {
@@ -415,6 +419,9 @@ export default function DocumentsPage() {
       return hay.includes(q);
     });
   }, [documents, search]);
+
+  const errorDocuments = useMemo(() => (documents ?? []).filter(doc => doc.status === "failed"), [documents]);
+  const recoverableDocuments = useMemo(() => (documents ?? []).filter(canRecoverInstallationReview), [documents]);
 
   const groupedDocuments = useMemo(() => {
     const map = new Map<string, typeof filteredDocuments>();
@@ -433,13 +440,15 @@ export default function DocumentsPage() {
       "certificate",
       "warranty_faq",
       "general",
+      "company",
     ];
 
     return order.map((key) => ({
       key,
       meta: (docTypeMeta as any)[key] as (typeof docTypeMeta)[keyof typeof docTypeMeta],
       docs: map.get(key) ?? [],
-    }));
+      errors: (map.get(key) ?? []).filter(doc => doc.status === "failed").length,
+    })).sort((a, b) => Number(b.errors > 0) - Number(a.errors > 0));
   }, [docTypeMeta, filteredDocuments]);
 
   const overallStats = useMemo(() => {
@@ -474,13 +483,18 @@ export default function DocumentsPage() {
       { value: "instruction", label: "Инструкции", count: counts.instruction ?? 0 },
       { value: "installation", label: "Монтаж", count: counts.installation ?? 0 },
       { value: "general", label: "Общие", count: counts.general ?? 0 },
-    ].filter((t) => t.value === "all" || t.count > 0);
+      { value: "company", label: "О компании", count: counts.company ?? 0 },
+    ].filter((t) => t.value === "all" || t.count > 0).map(tab => ({
+      ...tab, errors: tab.value === "all" ? filteredDocuments.filter(doc => doc.status === "failed").length
+        : groupedDocuments.find(group => group.key === tab.value)?.errors ?? 0,
+    }));
   }, [filteredDocuments.length, groupedDocuments]);
 
   const renderDocumentCard = (doc: any) => {
     const displayTitle = (doc.title && String(doc.title).trim()) || doc.filename;
     const showFilename = displayTitle !== doc.filename;
     const canUseDoc = doc.status === "indexed";
+    const review = doc.documentMetadata?.customFields?.installationReview;
     const awaitingReview = doc.status === "processing" && doc.docType === "installation" && doc.processingMessage?.includes("Ожидает проверки");
     const statusLabel = awaitingReview
       ? "Ожидает проверки"
@@ -492,7 +506,7 @@ export default function DocumentsPage() {
       : `${(doc.fileSize / 1024 / 1024).toFixed(2)} МБ`;
 
     return (
-      <Card key={doc.id} className="min-w-0 overflow-hidden">
+      <Card id={`document-${doc.id}`} key={doc.id} className={cn("min-w-0 overflow-hidden scroll-mt-6", doc.status === "failed" && "border-destructive/60")}>
         <CardHeader className="p-4 pb-3">
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -588,6 +602,9 @@ export default function DocumentsPage() {
                 Страниц: {doc.pages}
               </Badge>
             ) : null}
+            {review && <Badge variant="outline" className="text-[11px]">
+              {doc.status !== "indexed" ? "Проверенная копия сохранена" : review.kind === "manual" ? "Проверено вручную" : review.kind === "recovered" ? "Индекс восстановлен" : review.kind === "repair" ? "Обновлено из PDF" : "Ранее проиндексирован"}
+            </Badge>}
           </div>
 
           {awaitingReview && (
@@ -1079,9 +1096,11 @@ export default function DocumentsPage() {
                 <Badge variant="outline">Проиндексировано: {overallStats.indexed}</Badge>
                 <Badge variant="outline">В обработке: {overallStats.processing}</Badge>
                 <Badge variant="outline">Ожидают проверки: {overallStats.awaitingReview}</Badge>
+                <button type="button" onClick={() => document.getElementById("document-errors")?.scrollIntoView({ behavior: "smooth", block: "start" })} aria-label="Показать документы с ошибками">
                 <Badge variant={overallStats.failed > 0 ? "destructive" : "outline"}>
                   Ошибки: {overallStats.failed}
                 </Badge>
+                </button>
                 <Badge variant="outline">Чанков: {overallStats.chunks}</Badge>
               </div>
               <div className="flex gap-2">
@@ -1100,6 +1119,45 @@ export default function DocumentsPage() {
           </CardContent>
         </Card>
 
+        {errorDocuments.length > 0 && (
+          <Card id="document-errors" className="border-destructive/60 scroll-mt-6">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-lg"><AlertCircle className="h-5 w-5 text-destructive" />Ошибки документов: {errorDocuments.length}</CardTitle>
+              <CardDescription>Проблемы из всех разделов. Документы с ошибками также показаны первыми в своих вкладках.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {errorDocuments.map(doc => {
+                const section = (docTypeMeta as any)[doc.docType ?? "general"]?.title ?? "Общие документы";
+                return <div key={doc.id} className="rounded-md border p-3 space-y-2">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1"><p className="font-medium [overflow-wrap:anywhere]">{doc.title || doc.filename}</p><Badge variant="destructive">{section}</Badge></div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" variant="outline" onClick={() => setLocation(`/documents/${doc.id}`)}>Открыть документ</Button>
+                      <Button size="sm" variant="outline" onClick={() => {
+                        setSearch(""); setActiveTab(doc.docType ?? "general");
+                        requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById(`document-${doc.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" })));
+                      }}>Показать в разделе</Button>
+                    </div>
+                  </div>
+                  <p className="whitespace-pre-wrap text-sm text-destructive [overflow-wrap:anywhere]">{doc.errorMessage || doc.processingMessage || "Обработка документа завершилась ошибкой"}</p>
+                </div>;
+              })}
+            </CardContent>
+          </Card>
+        )}
+
+        {(recoverableDocuments.length > 0 || recoveringReviews) && (
+          <Card className="border-amber-500/50">
+            <CardHeader className="pb-3"><CardTitle className="text-lg">Ранее проверенные документы: {recoverableDocuments.length}</CardTitle>
+              <CardDescription>У этих документов сохранена проверенная версия или сведения о прежней индексации. Можно восстановить индекс без повторной ручной проверки каждого файла.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">Восстановление использует сохранённую проверенную версию, если она есть, иначе — текущий MD. Ручные правки, уже перезаписанные старой синхронизацией, можно вернуть только из резервной копии.</p>
+              <ReviewRecoveryButton ids={recoverableDocuments.map(doc => doc.id)} onBusyChange={setRecoveringReviews} />
+            </CardContent>
+          </Card>
+        )}
+
         {isLoading ? (
           <Card>
             <CardContent className="pt-6">
@@ -1117,6 +1175,7 @@ export default function DocumentsPage() {
                   <Badge variant="secondary" className="h-5 px-2 text-[11px]">
                     {t.count}
                   </Badge>
+                  {t.errors > 0 && <Badge variant="destructive" className="h-5 px-2 text-[11px]">Ошибок: {t.errors}</Badge>}
                 </TabsTrigger>
               ))}
             </TabsList>
@@ -1140,6 +1199,7 @@ export default function DocumentsPage() {
                         </div>
                         <Badge variant="outline" className="text-[11px]">
                           Документов: {group.docs.length}
+                          {group.errors > 0 && <span className="ml-2 text-destructive">Ошибок: {group.errors}</span>}
                         </Badge>
                       </div>
 

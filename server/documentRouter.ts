@@ -1,5 +1,5 @@
 import fs from "fs";
-import { startPassportRepair, getPassportRepairStatus } from "./passportRepair";
+import { startPassportRepair, getPassportRepairStatus, startInstallationReviewRecovery } from "./passportRepair";
 import { installationPath, indexInstallationMarkdown } from "./installationKnowledge";
 ﻿import { router, publicProcedure, protectedProcedure, knowledgeProcedure } from "./_core/trpc";
 import { z } from "zod";
@@ -29,6 +29,8 @@ import * as syncSourcesDb from "./knowledgeSyncSourcesDb";
  */
 
 export const documentRouter = router({
+  recoverInstallationReviews: knowledgeProcedure.input(z.object({ ids: z.array(z.number().int().positive()).min(1).max(500) }))
+    .mutation(({ input }) => startInstallationReviewRecovery(input.ids)),
   repairPassportKnowledge: knowledgeProcedure.input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ input }) => startPassportRepair(input.id)),
   getPassportRepairStatus: knowledgeProcedure.input(z.object({ jobId: z.string().max(80) }))

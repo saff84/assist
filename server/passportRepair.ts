@@ -5,14 +5,21 @@ import {
   installationPath,
   preparePassportKnowledge,
   indexInstallationMarkdown,
+  hasSamePassportSource,
 } from "./installationKnowledge";
 import { pdfToMarkdown } from "./pdfMarkdown";
+import { canRecoverInstallationReview } from "../shared/documentReview";
+import { readInstallationReview } from "./installationReviewStore";
 
 type RepairStatus = {
   state: "running" | "done" | "failed";
   message: string;
   documentId?: number;
   chunks?: number;
+  total?: number;
+  processed?: number;
+  restored?: number;
+  errors?: Array<{ id: number; title: string; message: string }>;
 };
 const jobs = new Map<string, RepairStatus>();
 const active = new Map<string, string>();
@@ -25,6 +32,109 @@ export function getPassportRepairStatus(jobId: string): RepairStatus {
         "Задача не найдена. Возможно, сервер перезапустился; повторите обновление.",
     }
   );
+}
+
+/** Restore only previously indexed documents, without regenerating or overwriting their MD. */
+export async function startInstallationReviewRecovery(ids: number[]) {
+  const selected = new Set(ids);
+  const documents = (await documentDb.getAllDocuments()).filter(
+    doc => selected.has(doc.id) && canRecoverInstallationReview(doc)
+  );
+  if (!documents.length)
+    throw new Error("Нет ранее индексированных документов для восстановления");
+  const keyFor = (doc: (typeof documents)[number]) =>
+    /^passport-\d+\.md$/.test(doc.filename)
+      ? doc.filename.replace(/\.md$/, "")
+      : `installation-${doc.id}`;
+  if (documents.some(doc => active.has(keyFor(doc))))
+    throw new Error(
+      "Один из документов уже обновляется. Дождитесь завершения."
+    );
+  const jobId = `review-recovery:${randomUUID()}`;
+  documents.forEach(doc => active.set(keyFor(doc), jobId));
+  jobs.set(jobId, {
+    state: "running",
+    message: "Восстановление индекса ранее проверенных документов",
+    total: documents.length,
+    processed: 0,
+    restored: 0,
+  });
+  void (async () => {
+    let processed = 0,
+      restored = 0;
+    const errors: Array<{ id: number; title: string; message: string }> = [];
+    try {
+      for (const original of documents) {
+        try {
+          const doc = await documentDb.getDocumentById(original.id);
+          if (!doc || !canRecoverInstallationReview(doc)) {
+            processed++;
+            continue;
+          }
+          jobs.set(jobId, {
+            state: "running",
+            message: `Восстановление: ${doc.title || doc.filename}`,
+            total: documents.length,
+            processed,
+            restored,
+            errors: [...errors],
+          });
+          const saved = readInstallationReview(doc.id, doc.documentMetadata);
+          const passportId = Number(
+            /^passport-(\d+)\.md$/.exec(doc.filename)?.[1]
+          );
+          if (passportId) {
+            const source = await documentDb.getDocumentById(passportId);
+            if (
+              !source ||
+              !hasSamePassportSource(doc, source.contentHash) ||
+              (saved?.review.sourcePdfHash &&
+                saved.review.sourcePdfHash !== source.contentHash)
+            ) {
+              throw new Error(
+                "Исходный PDF изменился после проверки. Этот документ нужно проверить повторно."
+              );
+            }
+          }
+          await indexInstallationMarkdown(doc.id, saved?.markdown, {
+            reviewKind: "recovered",
+          });
+          restored++;
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          errors.push({
+            id: original.id,
+            title: original.title || original.filename,
+            message,
+          });
+          try {
+            await documentDb.updateDocumentStatus(
+              original.id,
+              "failed",
+              message
+            );
+          } catch (dbError) {
+            console.error("[ReviewRecovery]", dbError);
+          }
+        }
+        processed++;
+      }
+      jobs.set(jobId, {
+        state: restored ? "done" : errors.length ? "failed" : "done",
+        message: `Восстановлено: ${restored}. Ошибок: ${errors.length}.`,
+        total: documents.length,
+        processed,
+        restored,
+        errors,
+      });
+    } finally {
+      documents.forEach(doc => {
+        if (active.get(keyFor(doc)) === jobId) active.delete(keyFor(doc));
+      });
+    }
+  })();
+  return { jobId };
 }
 
 /** Explicit repair of selected documents, including replacement of published chunks. */
