@@ -1,5 +1,7 @@
 import { generateEmbeddingVector } from "./embeddingClient";
 import { getCachedSectionChunks } from "./rag/sectionCache";
+import { readQueryRouting } from "./queryRoutingStore";
+import { resolveQueryRoute, routeDocumentTypes } from "../shared/queryRouting";
 import { eq, desc, sql } from "drizzle-orm";
 
 import {
@@ -868,7 +870,10 @@ async function retrieveAndScoreChunks(
       hasCatalogIntent(query) || options?.forceDocumentType === "catalog",
   };
 
-  const { chunks: rawChunks, documentMeta } = await fetchRawChunks(config);
+  const { chunks: allRawChunks, documentMeta } = await fetchRawChunks(config);
+  const rawChunks = options?.allowedDocumentTypes
+    ? allRawChunks.filter(chunk => options.allowedDocumentTypes!.includes(chunk.docType))
+    : allRawChunks;
   if (!rawChunks.length) {
     return {
       chunks: [],
@@ -959,7 +964,9 @@ async function retrieveAndScoreChunks(
   });
 
   let candidateChunks = chunksWithScores;
-  if (options?.forceDocumentType) {
+  if (options?.allowedDocumentTypes) {
+    candidateChunks = candidateChunks.filter(chunk => options.allowedDocumentTypes!.includes(chunk.docType));
+  } else if (options?.forceDocumentType) {
     candidateChunks = candidateChunks.filter(
       (chunk) => chunk.docType === options.forceDocumentType
     );
@@ -3378,6 +3385,12 @@ export async function processRAGQuery(
   options?: RAGOptions
 ): Promise<RAGResponse> {
   const start = Date.now();
+  const matchedRoute = resolveQueryRoute(ragQuery.query, await readQueryRouting());
+  if (matchedRoute) {
+    options = {...options, forceDocumentType:matchedRoute.target,
+      allowedDocumentTypes:routeDocumentTypes(matchedRoute.target)};
+    console.log(`[RAG] Query route: rule=${matchedRoute.ruleName}, term=${matchedRoute.term}, target=${matchedRoute.target}`);
+  }
   const config = getRagConfig();
   const llmSettings = await getLlmSettingsForInvoke();
   const quickResponsesEnabled = llmSettings.useQuickResponses;
@@ -3405,7 +3418,7 @@ export async function processRAGQuery(
   };
 
   // Document-list meta questions work regardless of category
-  const metaResponse = await handleMetaQuery(ragQuery.query);
+  const metaResponse = matchedRoute ? null : await handleMetaQuery(ragQuery.query);
   if (metaResponse) {
     return {
       response: metaResponse,
@@ -3527,7 +3540,9 @@ export async function processRAGQuery(
 
   let typeFiltered = filtered;
   if (forcedDocType) {
-    typeFiltered = filtered.filter((chunk) => chunk.docType === forcedDocType);
+    typeFiltered = filtered.filter((chunk) => options?.allowedDocumentTypes
+      ? options.allowedDocumentTypes.includes(chunk.docType)
+      : chunk.docType === forcedDocType);
     if (!typeFiltered.length) {
       const clarification = `В теме «${docTypeLabel(
         forcedDocType

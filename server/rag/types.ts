@@ -83,6 +83,7 @@ export interface RAGOptions {
   topK?: number;
   includeDiagnostics?: boolean;
   forceDocumentType?: DocumentType;
+  allowedDocumentTypes?: DocumentType[];
   disableReranker?: boolean;
 }
 
