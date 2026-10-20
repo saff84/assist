@@ -1,7 +1,8 @@
 import fs from "fs";
+import crypto from "crypto";
 import path from "path";
 import * as documentDb from "./documentDb";
-import { pdfToMarkdown } from "./pdfMarkdown";
+import { pdfToMarkdown, PDF_MARKDOWN_VERSION } from "./pdfMarkdown";
 import { processDocument } from "./documentProcessor";
 import { generateEmbeddingVector } from "./embeddingClient";
 import { tokenize, createStopwordSet } from "./rag/textProcessing";
@@ -15,17 +16,25 @@ export function installationPath(id: number, filename: string) {
   );
 }
 
+export function passportKnowledgeHash(pdfHash: string | null) {
+  return crypto
+    .createHash("sha256")
+    .update(`${PDF_MARKDOWN_VERSION}:${pdfHash ?? ""}`)
+    .digest("hex");
+}
+
 /** One derived MD per passport; original PDF remains searchable in Passports. */
 export async function preparePassportKnowledge(passportId: number) {
   const passport = await documentDb.getDocumentById(passportId);
   if (!passport || passport.docType !== "passport")
     throw new Error("Паспорт не найден");
   const filename = `passport-${passportId}.md`;
+  const conversionHash = passportKnowledgeHash(passport.contentHash);
   const derived = (await documentDb.getAllDocuments()).find(
     d => d.docType === "installation" && d.filename === filename
   );
   if (
-    derived?.contentHash === passport.contentHash &&
+    derived?.contentHash === conversionHash &&
     derived.status !== "failed" &&
     fs.existsSync(installationPath(derived.id, filename))
   ) {
@@ -42,7 +51,7 @@ export async function preparePassportKnowledge(passportId: number) {
     await documentDb.updateDocumentStatus(
       derived.id,
       "failed",
-      "Исходный PDF изменён. Ожидается повторная обработка."
+      "Ожидается повторная обработка PDF обновлённым конвертером."
     );
   const markdown = await pdfToMarkdown(
     installationPath(passport.id, passport.filename),
@@ -72,7 +81,7 @@ export async function preparePassportKnowledge(passportId: number) {
   );
   await documentDb.updateDocumentDownloadFilename(id, passport.filename);
   await documentDb.updateDocumentSyncRecord(id, {
-    contentHash: passport.contentHash,
+    contentHash: conversionHash,
     title: passport.title,
     fileSize: Buffer.byteLength(markdown),
     syncSourceId: passport.syncSourceId,
@@ -107,6 +116,12 @@ export async function indexInstallationMarkdown(id: number, markdown?: string) {
         );
     }
     await documentDb.updateDocumentStatus(id, "processing");
+    await documentDb.updateDocumentProgress(
+      id,
+      "embedding",
+      50,
+      "Индексация проверенного Markdown"
+    );
     const filePath = installationPath(id, doc.filename);
     if (markdown !== undefined) fs.writeFileSync(filePath, markdown, "utf8");
     const processed = await processDocument(filePath, "installation");

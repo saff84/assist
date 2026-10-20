@@ -445,15 +445,17 @@ export default function DocumentsPage() {
     const list = documents ?? [];
     let indexed = 0;
     let processing = 0;
+    let awaitingReview = 0;
     let failed = 0;
     let chunks = 0;
     list.forEach((d) => {
       if (d.status === "indexed") indexed += 1;
+      else if (d.status === "processing" && d.docType === "installation" && d.processingMessage?.includes("Ожидает проверки")) awaitingReview += 1;
       else if (d.status === "processing") processing += 1;
       else if (d.status === "failed") failed += 1;
       chunks += Number(d.chunksCount ?? 0);
     });
-    return { total: list.length, indexed, processing, failed, chunks };
+    return { total: list.length, indexed, processing, awaitingReview, failed, chunks };
   }, [documents]);
 
   const tabItems = useMemo(() => {
@@ -478,6 +480,7 @@ export default function DocumentsPage() {
     const displayTitle = (doc.title && String(doc.title).trim()) || doc.filename;
     const showFilename = displayTitle !== doc.filename;
     const canUseDoc = doc.status === "indexed";
+    const awaitingReview = doc.status === "processing" && doc.docType === "installation" && doc.processingMessage?.includes("Ожидает проверки");
 
     return (
       <Card key={doc.id} className="overflow-hidden">
@@ -565,7 +568,16 @@ export default function DocumentsPage() {
             ) : null}
           </div>
 
-          {doc.status === "processing" && (
+          {awaitingReview && (
+            <div className="mt-3 space-y-1 text-sm">
+              <Badge variant="outline">Ожидает ручной проверки</Badge>
+              <p className="text-xs text-muted-foreground">
+                Markdown подготовлен. Нажмите «Проверить MD», сверьте полноту текста
+                и таблиц с PDF, затем сохраните и запустите индексацию.
+              </p>
+            </div>
+          )}
+          {doc.status === "processing" && !awaitingReview && (
             <div className="mt-3 space-y-1">
               <div className="flex items-center justify-between text-xs text-muted-foreground">
                 <span className="truncate">
@@ -887,7 +899,9 @@ export default function DocumentsPage() {
                   </p>
                   <p className="text-xs text-muted-foreground leading-relaxed">
                     Загрузите PDF паспорта или готовый Markdown. PDF будет преобразован в MD:
-                    проверьте текст через кнопку «Проверить MD» и запустите индексацию.
+                    через «Проверить MD» вручную сверьте все страницы, конец документа и
+                    таблицы с оригиналом. При обрывах или пропусках нужна повторная обработка.
+                    После проверки нажмите «Сохранить и индексировать».
                     Оригинал PDF сохраняется. Сканы без текста требуют OCR.
                   </p>
                   <ul className="list-disc list-inside space-y-1.5 text-xs text-muted-foreground leading-relaxed">
@@ -1042,6 +1056,7 @@ export default function DocumentsPage() {
                 <Badge variant="secondary">Всего: {overallStats.total}</Badge>
                 <Badge variant="outline">Проиндексировано: {overallStats.indexed}</Badge>
                 <Badge variant="outline">В обработке: {overallStats.processing}</Badge>
+                <Badge variant="outline">Ожидают проверки: {overallStats.awaitingReview}</Badge>
                 <Badge variant={overallStats.failed > 0 ? "destructive" : "outline"}>
                   Ошибки: {overallStats.failed}
                 </Badge>

@@ -21,7 +21,10 @@ vi.mock("./documentDb", () => ({
   replaceDocumentSections: vi.fn(),
   updateDocumentMetadata: vi.fn(),
 }));
-vi.mock("./pdfMarkdown", () => ({ pdfToMarkdown: vi.fn() }));
+vi.mock("./pdfMarkdown", () => ({
+  pdfToMarkdown: vi.fn(),
+  PDF_MARKDOWN_VERSION: "layout-v2",
+}));
 vi.mock("./documentProcessor", () => ({ processDocument: vi.fn() }));
 vi.mock("./embeddingClient", () => ({ generateEmbeddingVector: vi.fn() }));
 vi.mock("./rag/config", () => ({
@@ -34,6 +37,7 @@ import { generateEmbeddingVector } from "./embeddingClient";
 import {
   preparePassportKnowledge,
   indexInstallationMarkdown,
+  passportKnowledgeHash,
 } from "./installationKnowledge";
 
 const passport = {
@@ -90,13 +94,16 @@ describe("installation knowledge lifecycle", () => {
     expect(docs.deleteDocumentChunks).toHaveBeenCalledWith(20);
     expect(docs.updateDocumentSyncRecord).toHaveBeenCalledWith(
       20,
-      expect.objectContaining({ contentHash: "new", status: "processing" })
+      expect.objectContaining({
+        contentHash: passportKnowledgeHash("new"),
+        status: "processing",
+      })
     );
     expect(generateEmbeddingVector).not.toHaveBeenCalled();
   });
   it("leaves unchanged reviewed knowledge intact", async () => {
     vi.mocked(docs.getAllDocuments).mockResolvedValue([
-      { ...derived, contentHash: "new" },
+      { ...derived, contentHash: passportKnowledgeHash("new") },
     ] as any);
     expect(await preparePassportKnowledge(10)).toEqual({
       id: 20,
@@ -104,6 +111,23 @@ describe("installation knowledge lifecycle", () => {
     });
     expect(pdfToMarkdown).not.toHaveBeenCalled();
     expect(docs.deleteDocumentChunks).not.toHaveBeenCalled();
+  });
+  it("rebuilds legacy Markdown even when the PDF has not changed", async () => {
+    vi.mocked(docs.getAllDocuments).mockResolvedValue([
+      { ...derived, contentHash: "new" },
+    ] as any);
+    expect(await preparePassportKnowledge(10)).toEqual({
+      id: 20,
+      state: "review",
+    });
+    expect(pdfToMarkdown).toHaveBeenCalled();
+    expect(docs.updateDocumentSyncRecord).toHaveBeenCalledWith(
+      20,
+      expect.objectContaining({
+        contentHash: passportKnowledgeHash("new"),
+        status: "processing",
+      })
+    );
   });
   it("disables stale knowledge if the changed PDF cannot be parsed", async () => {
     vi.mocked(pdfToMarkdown).mockRejectedValueOnce(new Error("OCR"));
