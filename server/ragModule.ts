@@ -3,6 +3,7 @@ import { getCachedSectionChunks } from "./rag/sectionCache";
 import { extractDocumentSkus, lookupDocumentsForSku } from "./skuDocumentLookup";
 import { trackIntentStage } from "./intentTrace";
 import { runIntentPipeline } from "./intentPipeline";
+import { composeAnswerSystemPrompt } from "./rag/answerSourcePolicy";
 import { eq, desc, sql } from "drizzle-orm";
 
 import {
@@ -3023,11 +3024,7 @@ async function fetchActiveSystemPrompt(): Promise<string> {
 }
 
 function composeSystemPrompt(template: string, activePrompt: string): string {
-  const extra = (activePrompt || "").trim();
-  if (!extra) {
-    return template.trim();
-  }
-  return `${template.trim()}\n\n[Дополнительные инструкции]\n${extra}`.trim();
+  return composeAnswerSystemPrompt(template,activePrompt||"");
 }
 
 function buildUserMessage(
@@ -3077,8 +3074,8 @@ function buildUserMessage(
 5. Если не уверен, какой товар имеется в виду — уточни или скажи, что информации недостаточно для точного ответа.
 
 КРИТИЧЕСКИ ВАЖНО — ВЫБОР ИСТОЧНИКОВ:
-1. Для вопросов о характеристиках, описании, параметрах товара используй ТОЛЬКО источники из каталога (где "Тип: catalog"). НЕ используй другие документы.
-2. Для вопросов о монтаже, установке, подключении, сборке оборудования используй ТОЛЬКО источники из «Пособия по монтажу» (где "Тип: instruction"). НЕ используй каталог для монтажных вопросов.
+1. Для характеристик используй относящиеся к вопросу данные выбранных catalog и installation.
+2. Для монтажа используй instruction и installation. Монтажные разделы технических паспортов с типом installation являются допустимыми источниками; отдельное «Пособие по монтажу» не требуется.
 3. В каждом источнике указан его тип в поле "Тип:". Строго следуй правилу выбора источников по типу вопроса.
 
 ${detailPolicy}
