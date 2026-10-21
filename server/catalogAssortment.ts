@@ -34,7 +34,7 @@ function qualifierMatches(query:string,candidate:string):boolean {
   return edits+(query.length-a)+(candidate.length-b)<=1;
 }
 export function assortmentQualifiers(query:string):string[] {
-  const ignored=/^(?:какие|каких|какой|какая|какое|каков|есть|имеются|бывают|у|в|на|по|и|или|из|для|мне|пожалуйста|sanext|санекст|ассортимент|перечисли|перечислите|список|виды|типы|все|вас|ваши|предлагает|выпускает|покажи|покажите|доступны|давления)$/i;
+  const ignored=/^(?:расскажи|расскажите|подскажи|подскажите|скажи|скажите|можешь|можете|ли|вы|ты|о|об|про|какие|каких|какой|какая|какое|каков|есть|имеются|бывают|у|в|на|по|и|или|из|для|мне|пожалуйста|sanext|санекст|ассортимент|перечисли|перечислите|список|виды|типы|все|вас|ваши|предлагает|выпускает|покажи|покажите|доступны|давления)$/i;
   return words(query).filter(word=>!ignored.test(word)&&!families.some(f=>f.test(word))).map(stem);
 }
 export function selectAssortment(entries:Entry[],family:RegExp,query=""):Entry[] {

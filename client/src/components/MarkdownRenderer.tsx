@@ -20,7 +20,7 @@ export function MarkdownRenderer({
   return (
     <div
       className={cn(
-        "prose prose-sm dark:prose-invert max-w-none",
+        "prose prose-sm dark:prose-invert max-w-none min-w-0",
         "prose-p:my-1 prose-ul:my-1 prose-ol:my-1",
         className
       )}
@@ -29,22 +29,29 @@ export function MarkdownRenderer({
         remarkPlugins={[remarkGfm]}
         components={{
           table: ({ node, ...props }) => (
-            <div className="my-2 overflow-x-auto">
+            <div className="my-2 min-w-0 max-w-full">
+              <div className="mb-1 text-xs text-muted-foreground">Широкую таблицу можно прокрутить влево и вправо.</div>
+              <div role="region" aria-label="Таблица: горизонтальная прокрутка" tabIndex={0}
+                style={{maxWidth:"100%",overflowX:"auto",overscrollBehaviorX:"contain"}}>
               <table
-                className="w-full border-collapse text-sm [&_thead_tr]:bg-muted [&_th]:font-semibold"
+                className="border-collapse text-sm [&_thead_tr]:bg-muted [&_th]:font-semibold"
+                style={{tableLayout:"auto",width:"max-content",minWidth:"100%",maxWidth:"none",wordBreak:"normal",overflowWrap:"normal"}}
                 {...props}
               />
+              </div>
             </div>
           ),
           th: ({ node, ...props }) => (
             <th
               className="border border-border px-3 py-1 text-left leading-tight"
+              style={{minWidth:110,maxWidth:280,whiteSpace:"normal",wordBreak:"normal",overflowWrap:"normal"}}
               {...props}
             />
           ),
           td: ({ node, ...props }) => (
             <td
               className="border border-border px-3 py-1 align-top"
+              style={{minWidth:110,maxWidth:280,whiteSpace:"normal",wordBreak:"normal",overflowWrap:"normal"}}
               {...props}
             />
           ),

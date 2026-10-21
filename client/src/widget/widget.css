@@ -186,6 +186,8 @@
 }
 
 #sanext-chat-widget-root .sanext-widget-bubble {
+  min-width: 0;
+  max-width: 100%;
   width: 100%;
   padding: 12px 14px;
   border-radius: 14px;

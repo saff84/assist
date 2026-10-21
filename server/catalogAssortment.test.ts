@@ -4,6 +4,10 @@ import { getDb } from "./db";
 import { MySqlDialect } from "drizzle-orm/mysql-core";
 import { assortmentFamily, selectAssortment, catalogAssortmentResponse } from "./catalogAssortment";
 const fixtures=(names:string[])=>names.map((name,documentId)=>({name,documentId,filename:"catalog.md"}));
+it.each(["какие трубы есть","расскажи какие трубы есть","расскажите пожалуйста какие трубы есть","подскажи мне какие трубы есть"])("keeps the same assortment for conversational wording: %s",query=>{
+  const entries=fixtures(["Труба SANEXT «Стабил»","Труба SANEXT «Тёплый пол»"]);
+  expect(selectAssortment(entries,assortmentFamily(query)!,query)).toHaveLength(2);
+});
 it("returns the five pipe headings from the supplied SANEXT catalog instead of SKU sizes or tools",async()=>{
   const names=["Труба SANEXT «Универсальная»","Труба SANEXT PE-Xa без кислородного барьера","Труба SANEXT «Стабил»","Труба SANEXT «Тёплый пол»","Труба SANEXT «Гофрированная»"];
   const base={documentId:1,filename:"Трубы SANEXT.md"};

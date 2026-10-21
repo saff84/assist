@@ -1,4 +1,22 @@
 import { beforeEach, expect, it, vi } from "vitest";
+vi.mock("./catalogSubject",()=>({resolveCatalogSubject:vi.fn().mockResolvedValue(null)}));
+import { resolveCatalogSubject } from "./catalogSubject";
+it("answers characteristics of a uniquely resolved catalog line without redundant clarification",async()=>{
+  vi.mocked(resolveCatalogSubject).mockResolvedValueOnce("Труба SANEXT «Стабил»");
+  const execute=vi.fn().mockResolvedValue(result);
+  await runIntentPipeline(input("характеристики стабила"),undefined,execute);
+  expect(execute).toHaveBeenCalledWith(expect.objectContaining({query:expect.stringContaining("Труба SANEXT «Стабил»")}),expect.objectContaining({forceDocumentType:"catalog",requireSynthesis:true}));
+  expect(classifyQueryIntent).not.toHaveBeenCalled();
+});
+it("retains the requested characteristics when the user supplies the missing product name",async()=>{
+  const previous=createIntentTrace("характеристики стабила","test","a");
+  previous.outcome="clarification";previous.clarificationQuestion="О каком товаре идёт речь?";
+  vi.mocked(listIntentTraces).mockResolvedValueOnce([previous]);
+  const execute=vi.fn().mockResolvedValue(result);
+  await runIntentPipeline(input("Труба SANEXT «Стабил»"),undefined,execute);
+  expect(execute).toHaveBeenCalledWith(expect.objectContaining({query:expect.stringContaining("характеристики стабила")}),expect.objectContaining({forceDocumentType:"catalog"}));
+  expect(classifyQueryIntent).not.toHaveBeenCalled();
+});
 vi.mock("./catalogAssortment",async original=>({...await original<typeof import("./catalogAssortment")>(),catalogAssortmentResponse:vi.fn().mockResolvedValue(null)}));
 import { catalogAssortmentResponse } from "./catalogAssortment";
 it("answers a catalog assortment query without single-chunk search or classification",async()=>{

@@ -7,6 +7,7 @@ import { createIntentTrace, listIntentTraces, recordIntentStage, runWithIntentTr
 import { intentStageLabels } from "../shared/intentProcessing";
 import { isProductOnlyQuery, productTaskQuestion, isTaskSelection, productTaskTargets } from "./productQuestion";
 import { assortmentFamily, catalogAssortmentResponse } from "./catalogAssortment";
+import { resolveCatalogSubject } from "./catalogSubject";
 export async function runIntentPipeline(
   ragQuery:RAGQuery, options:RAGOptions|undefined, executeRAGQuery:(query:RAGQuery,options?:RAGOptions)=>Promise<RAGResponse>
 ):Promise<RAGResponse> {
@@ -32,9 +33,17 @@ export async function runIntentPipeline(
           return {...overview,mode:"scoped",responseTime:Date.now()-start};
         }
       }
-      const taskFollowup=previous?.outcome==="clarification"&&isTaskSelection(ragQuery.query)
-        ? `${previous.searchQuery??previous.query}\nВопрос пользователя: ${ragQuery.query}`:null;
-      if(!options?.forceDocumentType && isProductOnlyQuery(ragQuery.query) && (!rule||["catalog","installation","instruction"].includes(rule.target))) {
+      const productAnswerFollowup=previous?.outcome==="clarification"&&isTaskSelection(previous.query)&&isProductOnlyQuery(ragQuery.query)
+        ? `${ragQuery.query}\nЗадача пользователя: ${previous.query}`:null;
+      const subjectStarted=Date.now();
+      const resolvedSubject=!options?.forceDocumentType&&config.enabled?await resolveCatalogSubject(ragQuery.query):null;
+      if(resolvedSubject) {
+        recordIntentStage("retrieval","success",`Название изделия уточнено по каталогу: ${resolvedSubject}`,Date.now()-subjectStarted);
+        ragQuery={...ragQuery,query:`${ragQuery.query}\nТовар из каталога: ${resolvedSubject}`};
+      }
+      const taskFollowup=productAnswerFollowup??(previous?.outcome==="clarification"&&isTaskSelection(ragQuery.query)
+        ? `${previous.searchQuery??previous.query}\nВопрос пользователя: ${ragQuery.query}`:null);
+      if(!productAnswerFollowup&&!options?.forceDocumentType && isProductOnlyQuery(ragQuery.query) && (!rule||["catalog","installation","instruction"].includes(rule.target))) {
         const response=productTaskQuestion(ragQuery.query);
         trace.method=rule?"rule":"product";trace.targets=rule?[rule.target,...rule.additionalTargets]:["catalog","installation"];
         trace.outcome="clarification";trace.searchQuery=ragQuery.query;trace.clarificationQuestion=response;
@@ -45,13 +54,16 @@ export async function runIntentPipeline(
       let query=ragQuery;
       if(rule) {
         trace.method="rule";trace.targets=[rule.target,...rule.additionalTargets];
-        trace.stages[trace.stages.length-1].detail=`Правило «${rule.ruleName}», совпадение «${rule.term}»`;
+        const ruleStage=trace.stages.find(stage=>stage.stage==="rules");
+        if(ruleStage)ruleStage.detail=`Правило «${rule.ruleName}», совпадение «${rule.term}»`;
         if(trace.sessionHash && /(?:^|\s)(?:е[её]|его|их|этого|этой|него|не[её]|это|они|он|она)(?:[?.,!]|\s|$)/i.test(ragQuery.query)) {
           const context=history.find(item=>item.outcome==="answer");
           if(context)query={...ragQuery,query:`${ragQuery.query}\nКонтекст предыдущего вопроса: ${(context.searchQuery??context.query).slice(0,2000)}`};
         }
       } else if(options?.forceDocumentType) {
         trace.method="manual";trace.targets=[options.forceDocumentType];
+      } else if(productAnswerFollowup||resolvedSubject) {
+        trace.method="product";trace.targets=productAnswerFollowup?productTaskTargets(previous!.query):["catalog"];
       } else if(taskFollowup && previous && isProductOnlyQuery(previous.query)) {
         trace.method="product";trace.targets=productTaskTargets(ragQuery.query);
       } else if(config.enabled && config.fallback==="llm") {

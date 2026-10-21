@@ -219,7 +219,7 @@ export default function TestPanelPage() {
                       className={`flex ${msg.type === "user" ? "justify-end" : "justify-start"} gap-2`}
                     >
                       <div
-                        className={`w-full max-w-3xl px-4 py-3 rounded-lg shadow-sm ${
+                        className={`w-full min-w-0 max-w-3xl px-4 py-3 rounded-lg shadow-sm ${
                           msg.type === "user"
                             ? "bg-primary text-primary-foreground"
                             : "bg-muted text-foreground border"
