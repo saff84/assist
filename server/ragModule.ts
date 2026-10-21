@@ -3452,7 +3452,10 @@ async function executeRAGQuery(
       if(result.status==="ambiguous") {
         return lookupReply(`Артикул **${result.sku}** найден у нескольких товарных групп. Уточните нужную:\n\n${result.groups.map(group=>`- ${group}`).join("\n")}`);
       }
-      resolutionPrefix=`Артикул **${result.sku}** → ${result.groupKind==="group"?"товарная группа":"товар (группа не назначена)"}: **${result.group}**.\n\n`;
+      resolutionPrefix=result.group
+        ? `Артикул **${result.sku}** → ${result.groupKind==="group"?"товарная группа":"товар (группа не назначена)"}: **${result.group}**.\n\n`
+        : `Артикул **${result.sku}**.\n\n`;
+      if(result.matchKind==="sku")resolutionPrefix+="Точный артикул указан в названии документа.\n\n";
       hits=result.documents;
       console.log(`[RAG] Document SKU lookup: sku=${result.sku}, group=${result.group}, type=${forcedDocType}, hits=${hits.length}`);
       if(!hits.length) {

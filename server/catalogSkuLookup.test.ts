@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 vi.mock("./db",()=>({getDb:vi.fn()}));
 import { getDb } from "./db";
-import { findCatalogSku } from "./catalogSkuLookup";
+import { findCatalogSku, catalogNameFromContent } from "./catalogSkuLookup";
 it("resolves manual catalog SKUs only from article cells, preserving their assigned group",async()=>{
   const where=vi.fn().mockResolvedValueOnce([{groupName:"Группа из products",productName:"Товар"}])
     .mockResolvedValueOnce([
@@ -18,4 +18,13 @@ it("resolves manual catalog SKUs only from article cells, preserving their assig
 it("does not mask database unavailability as a missing article",async()=>{
   vi.mocked(getDb).mockResolvedValue(null);
   await expect(findCatalogSku("5905")).rejects.toThrow("Database not available");
+});
+it("resolves automatically indexed catalog tables whose product name is only in the section heading",async()=>{
+  const group="Краны для подключения термодатчика, ВР-ВР";
+  const where=vi.fn().mockResolvedValueOnce([{groupName:null,productName:null,sectionTitle:group}])
+    .mockResolvedValueOnce([{rows:[{Артикул:5905,DN:15,Назначение:"Для термодатчика"}],metadata:{section:group},content:`1.1.7. ${group} Товар: ${group} Артикул: 5905 | Артикул | DN |`}]);
+  const chain:any={from:vi.fn(()=>chain),innerJoin:vi.fn(()=>chain),leftJoin:vi.fn(()=>chain),where};
+  vi.mocked(getDb).mockResolvedValue({select:vi.fn(()=>chain)} as any);
+  expect(await findCatalogSku("5905")).toEqual([{groupName:group,productName:null},{groupName:group,productName:null}]);
+  expect(catalogNameFromContent(`1.1.7. ${group} Товар: ${group} Артикул: 5905 | Артикул | DN |`)).toBe(group);
 });

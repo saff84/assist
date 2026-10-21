@@ -1,4 +1,4 @@
-import { desc, sql } from "drizzle-orm";
+import { and, eq, or, desc, sql } from "drizzle-orm";
 import { documents } from "../../drizzle/schema";
 import { getDb } from "../db";
 import type { DocumentType } from "./types";
@@ -122,4 +122,19 @@ export async function findBestDocumentsByTitle(
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
     .map((x) => x.doc);
+}
+
+/** Explicit SKU in a file title is stronger evidence than a group-name match. */
+export function exactDocumentSkuPattern(sku:string):string {
+  if(!/^\d{4,8}$/.test(sku))throw new Error("Invalid numeric SKU");
+  return `(^|[^0-9A-Za-zА-Яа-яЁё])${sku}([^0-9A-Za-zА-Яа-яЁё]|$)`;
+}
+export async function findDocumentsByExactSku(sku:string,docType:"passport"|"certificate"):Promise<BasicDocumentHit[]> {
+  const pattern=exactDocumentSkuPattern(sku);
+  const db=await getDb();if(!db)throw new Error("Database not available");
+  return await db.select({id:documents.id,filename:documents.filename,title:documents.title,
+    fileType:documents.fileType,docType:documents.docType,chunksCount:documents.chunksCount,downloadFilename:documents.downloadFilename})
+    .from(documents).where(and(eq(documents.status,"indexed"),eq(documents.docType,docType),
+      or(sql`${documents.title} REGEXP ${pattern}`,sql`${documents.filename} REGEXP ${pattern}`)))
+    .orderBy(desc(documents.createdAt)).limit(30) as BasicDocumentHit[];
 }

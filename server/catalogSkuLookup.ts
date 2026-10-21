@@ -1,8 +1,20 @@
 import { and, eq, or, sql } from "drizzle-orm";
-import { products, productGroups, documents, documentChunks } from "../drizzle/schema";
+import { products, productGroups, documents, documentChunks, sections } from "../drizzle/schema";
 import { getDb } from "./db";
 
 export type CatalogSkuMatch = {groupName:string|null; productName:string|null};
+export function catalogSectionName(value:unknown):string|null {
+  if(typeof value!=="string")return null;
+  const name=value.trim().replace(/^\d+(?:\.\d+)*\.?\s*/,"");
+  if(!name || /^(?:страница\s*\d+|номенклатура|характеристики|технические характеристики|каталог|root)$/i.test(name))return null;
+  return name;
+}
+export function catalogNameFromContent(content:string|undefined):string|null {
+  if(!content)return null;
+  const product=/(?:^|\s)Товар:\s*(.+?)(?=\s+Артикул\s*:|\s+Вариант\s*:|\n|\||$)/i.exec(content)?.[1];
+  if(product)return catalogSectionName(product);
+  return catalogSectionName(content.split(/\n|\|/)[0]?.replace(/\s+Артикул\s*:.*/i,""));
+}
 export function exactSkuRow(row:Record<string,unknown>, sku:string):boolean {
   return Object.entries(row).some(([key,value]) =>
     /артикул|\bsku\b|^код(?:\s|$)|article/i.test(key) && String(value ?? "").trim() === sku);
@@ -10,13 +22,16 @@ export function exactSkuRow(row:Record<string,unknown>, sku:string):boolean {
 export async function findCatalogSku(sku:string):Promise<CatalogSkuMatch[]> {
   const db=await getDb();
   if(!db) throw new Error("Database not available");
-  const matches = await db.select({groupName:productGroups.name,productName:products.name})
+  const rows = await db.select({groupName:productGroups.name,productName:products.name,sectionTitle:sections.title})
     .from(products).innerJoin(documents,eq(products.documentId,documents.id))
     .leftJoin(productGroups,and(eq(products.groupId,productGroups.id),eq(products.documentId,productGroups.documentId)))
+    .leftJoin(sections,and(eq(products.sectionId,sections.id),eq(products.documentId,sections.documentId)))
     .where(and(eq(products.sku,sku),eq(documents.docType,"catalog"),eq(documents.status,"indexed")));
+  const matches:CatalogSkuMatch[]=rows.map(row=>({groupName:catalogSectionName(row.groupName)??catalogSectionName(row.sectionTitle),productName:catalogSectionName(row.productName)}));
   // Manual catalog markup stores its SKUs in tableJson rather than products.
-  const chunks=await db.select({rows:documentChunks.tableJson,metadata:documentChunks.chunkMetadata})
+  const chunks=await db.select({rows:documentChunks.tableJson,metadata:documentChunks.chunkMetadata,content:documentChunks.content,sectionTitle:sections.title})
     .from(documentChunks).innerJoin(documents,eq(documentChunks.documentId,documents.id))
+    .leftJoin(sections,and(eq(documentChunks.documentId,sections.documentId),eq(documentChunks.sectionPath,sections.sectionPath)))
     .where(and(eq(documents.docType,"catalog"),eq(documents.status,"indexed"),
       or(sql`CAST(${documentChunks.tableJson} AS CHAR) LIKE ${"%"+sku+"%"}`,
         sql`${documentChunks.content} LIKE ${"%"+sku+"%"}`)));
@@ -24,8 +39,10 @@ export async function findCatalogSku(sku:string):Promise<CatalogSkuMatch[]> {
     for(const row of chunk.rows ?? []) {
       if(!exactSkuRow(row,sku)) continue;
       const name=Object.entries(row).find(([key])=>/наименование|название|^name$/i.test(key))?.[1];
-      matches.push({groupName:chunk.metadata?.productGroupName ?? null,
-        productName:chunk.metadata?.productVariantName ?? (name ? String(name):null)});
+      matches.push({groupName:catalogSectionName(chunk.metadata?.productGroupName)
+          ??catalogSectionName(chunk.metadata?.section)??catalogSectionName(chunk.sectionTitle)
+          ??catalogSectionName(chunk.metadata?.heading)??catalogNameFromContent(chunk.content),
+        productName:catalogSectionName(chunk.metadata?.productVariantName)??catalogSectionName(name)});
     }
   }
   return matches;
