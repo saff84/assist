@@ -4,6 +4,26 @@ import { getDb } from "./db";
 import { MySqlDialect } from "drizzle-orm/mysql-core";
 import { assortmentFamily, selectAssortment, catalogAssortmentResponse } from "./catalogAssortment";
 const fixtures=(names:string[])=>names.map((name,documentId)=>({name,documentId,filename:"catalog.md"}));
+it("expands pipe groups inside a single generic pipe catalog",async()=>{
+  const results=[[],[],[],[{documentId:1,filename:"Трубы SANEXT.md",name:"Трубы SANEXT"}],[
+    {documentId:1,filename:"Трубы SANEXT.md",name:"Труба SANEXT Теплый пол",sectionPath:"1.1"},
+    {documentId:1,filename:"Трубы SANEXT.md",name:"Труба SANEXT Универсальная",sectionPath:"1.2"},
+    {documentId:1,filename:"Трубы SANEXT.md",name:"Труба SANEXT Стабило",sectionPath:"1.3"},
+  ]];let index=0;
+  vi.mocked(getDb).mockResolvedValue({select:()=>{
+    const rows=results[index++]??[];const chain:any={from:()=>chain,innerJoin:()=>chain,leftJoin:()=>chain,where:async()=>rows};return chain;
+  }} as any);
+  const response=await catalogAssortmentResponse("какие трубы есть");
+  expect(response?.response).toContain("Теплый пол");expect(response?.response).toContain("Универсальная");expect(response?.response).toContain("Стабило");
+  expect(response?.response).not.toContain("- Трубы SANEXT\n");
+  expect(response?.response).toContain("О каком виде рассказать подробнее");expect(response?.sources).toHaveLength(3);
+});
+it("prefers pipe groups over dimensional variants without losing a duplicated group",()=>{
+  const entries=[...fixtures(["Труба Теплый пол","Труба Универсальная 16x2,2"]),
+    ...fixtures(["Труба Теплый пол","Труба Универсальная"]).map(entry=>({...entry,kind:"group" as const})),
+    {documentId:5,filename:"pipes.md",name:"Трубы SANEXT",kind:"catalog" as const}];
+  expect(selectAssortment(entries,assortmentFamily("какие трубы есть")!,"какие трубы есть").map(entry=>entry.name)).toEqual(["Труба Теплый пол","Труба Универсальная"]);
+});
 it("tolerates a typo in reducing qualifiers without broadening to other valves",()=>{
   const entries=fixtures(["Клапан редукционный мембранный DPRV-L","Клапан редукционный поршневой PRV-L","Клапан балансировочный"]);
   const query="какие есть редукционныые клапаны";
@@ -20,7 +40,7 @@ it("lists all separately indexed pipe types before SKU variants and asks which t
     {documentId:3,filename:"краны.md",name:"Кран для трубы"},
   ]];let index=0;
   vi.mocked(getDb).mockResolvedValue({select:()=>{
-    const rows=results[index++];const chain:any={from:()=>chain,innerJoin:()=>chain,leftJoin:()=>chain,where:async()=>rows};return chain;
+    const rows=results[index++]??[];const chain:any={from:()=>chain,innerJoin:()=>chain,leftJoin:()=>chain,where:async()=>rows};return chain;
   }} as any);
   const response=await catalogAssortmentResponse("какая есть труба");
   expect(response?.response).toContain("Труба SANEXT Теплый пол");expect(response?.response).toContain("Труба SANEXT Универсальная");
@@ -57,7 +77,7 @@ it("uses product records and SKU tables, never arbitrary headings, and stays in 
   ];
   const queries:any[]=[];
   vi.mocked(getDb).mockResolvedValue({select:()=>{
-    const chain:any={from:vi.fn(()=>chain),innerJoin:vi.fn(()=>chain),leftJoin:vi.fn(()=>chain),where:vi.fn().mockResolvedValue(results[queries.length])};
+    const chain:any={from:vi.fn(()=>chain),innerJoin:vi.fn(()=>chain),leftJoin:vi.fn(()=>chain),where:vi.fn().mockResolvedValue(results[queries.length]??[])};
     queries.push(chain);return chain;
   }} as any);
   const response=await catalogAssortmentResponse("какие есть клапаны");
@@ -96,7 +116,7 @@ it("loads fitting line names from indexed catalogs even if SKU names omit the wo
     {documentId:2,filename:"аксиальные_фитинги.md",name:"Аксиальные фитинги"},
   ]];let index=0;
   vi.mocked(getDb).mockResolvedValue({select:()=>{
-    const rows=results[index++];const chain:any={from:()=>chain,innerJoin:()=>chain,leftJoin:()=>chain,where:async()=>rows};return chain;
+    const rows=results[index++]??[];const chain:any={from:()=>chain,innerJoin:()=>chain,leftJoin:()=>chain,where:async()=>rows};return chain;
   }} as any);
   const response=await catalogAssortmentResponse("какие есть фитинги");
   expect(response?.response).toContain("фитинги lite");expect(response?.response).toContain("Аксиальные фитинги");

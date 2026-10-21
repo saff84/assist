@@ -15,7 +15,7 @@ export function assortmentFamily(query:string):RegExp|null {
   if(/редуктор/i.test(query))matched.push(/клапан(?=[\s\S]*редукцион)|редукцион(?=[\s\S]*клапан)/i);
   return matched.length?new RegExp(matched.map(pattern=>`(?:${pattern.source})`).join("|"),"i"):null;
 }
-type Entry={documentId:number;filename:string;name:string;sectionPath?:string|null;chunkIndex?:number;pageNumber?:number|null;kind?:"catalog"};
+type Entry={documentId:number;filename:string;name:string;sectionPath?:string|null;chunkIndex?:number;pageNumber?:number|null;kind?:"catalog"|"group"};
 const words=(value:string)=>value.toLowerCase().replace(/ё/g,"е").match(/[а-яa-z0-9]+/g)??[];
 const stem=(word:string)=>word.replace(/(?:иями|ами|ого|ему|ому|ыми|ими|ая|яя|ое|ее|ые|ие|ый|ий|ой|ых|их|ов|ам|ям|ах|ях|ы|и|а|я|у|ю|е|о)$/i,"");
 function qualifierMatches(query:string,candidate:string):boolean {
@@ -37,8 +37,9 @@ export function assortmentQualifiers(query:string):string[] {
 }
 export function selectAssortment(entries:Entry[],family:RegExp,query=""):Entry[] {
   const qualifiers=assortmentQualifiers(query);
+  if(family.test("трубы"))entries=[...entries].sort((a,b)=>Number(b.kind==="group")-Number(a.kind==="group"));
   // Pipe and fitting catalogs define the lines presented before individual items.
-  if((family.test("фитинги")||family.test("трубы"))&&!family.test("клапан")) {
+  if(family.test("фитинги")&&!family.test("трубы")&&!family.test("клапан")) {
     const catalogs=entries.filter(entry=>entry.kind==="catalog"&&family.test(entry.name)
       && !/инструмент|комплект|крепеж|крепёж|арматур|аксессуар/i.test(entry.name)
       && (!family.test("трубы")||family.test("фитинги")||/^труб(?:а|ы|у|е|ой|ами|ах)?$/.test(
@@ -46,7 +47,7 @@ export function selectAssortment(entries:Entry[],family:RegExp,query=""):Entry[]
     if(catalogs.length)entries=catalogs;
   }
   const seen=new Set<string>();
-  return entries.flatMap(entry=>{
+  const selected=entries.flatMap(entry=>{
     const name=entry.name.replace(/\.(?:md|pdf)$/i,"").replace(/_/g," ").replace(/^\d+(?:\.\d+)*\.?\s*/,"").trim();
     if (!family.test(name)||/монтаж|характеристик|таблица|размер|гидравлич|инструкц|номенклатур|сертифик|паспорт|упоминание|значени[ея]|настройк|подбор|комплектующ/i.test(name)) return [];
     const tokens=words(name);
@@ -60,12 +61,21 @@ export function selectAssortment(entries:Entry[],family:RegExp,query=""):Entry[]
     const key=stems.filter(word=>word!=="sanext"&&word!=="санекст").sort().join("|");
     if(seen.has(key))return [];seen.add(key);return [{...entry,name}];
   }).sort((a,b)=>a.name.localeCompare(b.name,"ru"));
+  if(family.test("трубы")&&!family.test("фитинги")&&!family.test("клапан")) {
+    const specific=selected.filter(entry=>words(entry.name).some(word=>!/^труб(?:а|ы|у|е|ой|ами|ах)?$/.test(word)&&!/^sanext$|^санекст$/.test(word)));
+    if(specific.length) {
+      const groups=specific.filter(entry=>entry.kind==="group");
+      const products=specific.filter(entry=>entry.kind!=="catalog");
+      return groups.length?groups:products.length?products:specific;
+    }
+  }
+  return selected;
 }
 export async function catalogAssortmentResponse(query:string):Promise<RAGResponse|null> {
   const family=assortmentFamily(query);if(!family)return null;
   const db=await getDb();if(!db)throw new Error("Database not available");
   const filter=and(eq(documents.docType,"catalog"),eq(documents.status,"indexed"));
-  const [automatic,manual,chunks,catalogs]=await Promise.all([
+  const [automatic,manual,chunks,catalogs,groups]=await Promise.all([
     db.select({documentId:documents.id,filename:documents.filename,name:products.name,groupName:productGroups.name,sectionName:sections.title,sectionPath:sections.sectionPath,pageNumber:products.pageNumber})
       .from(products).innerJoin(documents,eq(products.documentId,documents.id))
       .leftJoin(productGroups,and(eq(products.groupId,productGroups.id),eq(products.documentId,productGroups.documentId)))
@@ -79,14 +89,25 @@ export async function catalogAssortmentResponse(query:string):Promise<RAGRespons
       .leftJoin(sections,and(eq(documentChunks.documentId,sections.documentId),eq(documentChunks.sectionPath,sections.sectionPath)))
       .where(and(filter,isNotNull(documentChunks.tableJson))),
     db.select({documentId:documents.id,filename:documents.filename,name:documents.title}).from(documents).where(filter),
+    db.select({documentId:documents.id,filename:documents.filename,name:productGroups.name,sectionPath:productGroups.sectionPath})
+      .from(productGroups).innerJoin(documents,eq(productGroups.documentId,documents.id)).where(filter),
   ]);
   const candidates:Entry[]=[...manual,...automatic.map(row=>({...row,name:row.name||row.groupName||row.sectionName||""})),
     ...((family.test("фитинги")||family.test("трубы"))?catalogs.map(row=>({...row,name:row.name||row.filename,kind:"catalog" as const})):[])];
+  if(family.test("трубы")) {
+    for(const group of [...groups,...automatic.filter(row=>row.groupName).map(row=>({...row,name:row.groupName!}))]) {
+      const catalog=catalogs.find(item=>item.documentId===group.documentId);
+      const catalogName=catalog?.name||catalog?.filename||group.filename;
+      const name=/труб/i.test(group.name)?group.name:/^труб[аы](?:\s|_|$)/i.test(catalogName)?`Труба ${group.name}`:group.name;
+      candidates.push({...group,name,kind:"group"});
+    }
+  }
   for(const chunk of chunks)for(const row of chunk.rows??[]) {
     if(!Object.keys(row).some(key=>/артикул|^sku$|article/i.test(key)))continue;
     const rowName=Object.entries(row).find(([key])=>/наименование|название|^name$/i.test(key))?.[1];
     const name=typeof rowName==="string"&&rowName.trim()?rowName:chunk.metadata?.productVariantName||chunk.metadata?.productGroupName||chunk.sectionName;
     if(name)candidates.push({...chunk,name});
+    if(family.test("трубы")&&chunk.metadata?.productGroupName)candidates.push({...chunk,name:chunk.metadata.productGroupName,kind:"group"});
   }
   const entries=selectAssortment(candidates,family,query);
   if(!entries.length)return {response:"В базе товаров не удалось найти товарные позиции, соответствующие запросу. Уточните название категории или линейки — поиск выполнен только по базе товаров.",needsClarification:true,sources:[],responseTime:0,tokensUsed:0};
