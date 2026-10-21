@@ -1,4 +1,13 @@
 import { beforeEach, expect, it, vi } from "vitest";
+vi.mock("./catalogAssortment",async original=>({...await original<typeof import("./catalogAssortment")>(),catalogAssortmentResponse:vi.fn().mockResolvedValue(null)}));
+import { catalogAssortmentResponse } from "./catalogAssortment";
+it("answers a catalog assortment query without single-chunk search or classification",async()=>{
+  vi.mocked(catalogAssortmentResponse).mockResolvedValueOnce({response:"Линейки труб из каталогов",sources:[],tokensUsed:0,responseTime:0});
+  const execute=vi.fn();
+  const response=await runIntentPipeline(input("какие трубы есть у Sanext"),undefined,execute);
+  expect(response.response).toContain("Линейки труб");
+  expect(execute).not.toHaveBeenCalled();expect(classifyQueryIntent).not.toHaveBeenCalled();
+});
 vi.mock("./queryRoutingStore",()=>({readQueryRouting:vi.fn()}));
 vi.mock("./intentClassifier",()=>({classifyQueryIntent:vi.fn()}));
 vi.mock("./intentTrace",async original=>({...await original<typeof import("./intentTrace")>(),listIntentTraces:vi.fn().mockResolvedValue([]),saveIntentTrace:vi.fn().mockResolvedValue(undefined)}));
@@ -69,4 +78,23 @@ it("persists errors and isolates concurrent request stages",async()=>{
   for(const trace of saved)expect(trace.stages.filter(stage=>stage.stage==="retrieval").map(stage=>stage.detail)).toEqual([trace.query]);
   await expect(runIntentPipeline(input("монтаж"),undefined,async()=>{throw new Error("offline");})).rejects.toThrow("offline");
   expect(saveIntentTrace).toHaveBeenLastCalledWith(expect.objectContaining({outcome:"error"}));
+});
+it.each(["труба для теплого пола","поршневой редуктор","аксиальные фитинги"])("clarifies the task before searching a product-only query: %s",async query=>{
+  const execute=vi.fn();
+  const reply=await runIntentPipeline(input(query),undefined,execute);
+  expect(reply.response).toContain("Что вас интересует");expect(reply.response).not.toContain("нет информации");
+  expect(execute).not.toHaveBeenCalled();expect(classifyQueryIntent).not.toHaveBeenCalled();
+  expect(saveIntentTrace).toHaveBeenCalledWith(expect.objectContaining({outcome:"clarification",clarificationQuestion:reply.response}));
+});
+it.each(["характеристики","подбор","монтаж","общее описание"])("keeps the product when the user answers the task clarification: %s",async task=>{
+  const previous={...createIntentTrace("труба для теплого пола","test","a"),outcome:"clarification" as const,clarificationQuestion:"Что вас интересует?"};
+  vi.mocked(listIntentTraces).mockResolvedValue([previous]);
+  const execute=vi.fn().mockResolvedValue(result);
+  await runIntentPipeline(input(task),undefined,execute);
+  expect(execute).toHaveBeenCalledWith(expect.objectContaining({query:expect.stringContaining("труба для теплого пола")}),expect.objectContaining({requireSynthesis:true}));
+  expect(execute.mock.calls[0][0].query).toContain(task);expect(classifyQueryIntent).not.toHaveBeenCalled();
+});
+it("records a retrieval clarification so the next short answer can use it as context",async()=>{
+  await runIntentPipeline(input("монтаж трубы"),undefined,vi.fn().mockResolvedValue({...result,needsClarification:true,response:"Уточните линейку трубы?"}));
+  expect(saveIntentTrace).toHaveBeenCalledWith(expect.objectContaining({outcome:"clarification",clarificationQuestion:"Уточните линейку трубы?"}));
 });

@@ -14,4 +14,4 @@ export const intentDecisionSchema=z.object({
   reason:z.string().max(400),
 });
 export type IntentDecision=z.infer<typeof intentDecisionSchema>;
-export type IntentTrace={id:string; createdAt:string; query:string; searchQuery?:string; source:string; sessionHash?:string; targets:string[]; method:"rule"|"llm"|"manual"|"none"; stages:IntentStage[]; durationMs:number; outcome:"answer"|"clarification"|"error"; sourceCount:number; classification?:IntentDecision};
+export type IntentTrace={id:string; createdAt:string; query:string; searchQuery?:string; clarificationQuestion?:string; source:string; sessionHash?:string; targets:string[]; method:"rule"|"llm"|"manual"|"product"|"none"; stages:IntentStage[]; durationMs:number; outcome:"answer"|"clarification"|"error"; sourceCount:number; classification?:IntentDecision};

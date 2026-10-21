@@ -3,6 +3,12 @@ import { describe, expect, it } from "vitest";
 import { __testables } from "../../ragModule";
 
 describe("prompt snapshots", () => {
+  it("does not demand an article for a named product or product-group overview",()=>{
+    expect(__testables.isTooGenericCatalogQuery("описание поршневого редуктора")).toBe(false);
+    expect(__testables.isTooGenericCatalogQuery("характеристики аксиальных фитингов")).toBe(false);
+    expect(__testables.isTooGenericCatalogQuery("характеристики РКУ")).toBe(false);
+    expect(__testables.isTooGenericCatalogQuery("технические характеристики")).toBe(true);
+  });
   it("accepts installation-labelled mounting passages from a technical passport",()=>{
     const context=`[Источник #1]\nДокумент: Паспорт труба ТЕПЛЫЙ ПОЛ_08.25.pdf\nТип: installation\nТовар: 11. МОНТАЖ\nФрагмент: Размотка трубы допустима при температуре не ниже -20 °С.`;
     const message=__testables.buildUserMessage(context,"монтаж трубы теплый пол");

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { intentStageLabels } from "@shared/intentProcessing";
 import { routeLabels } from "@shared/queryRouting";
-const methods={rule:"Правило",llm:"Классификатор ИИ",manual:"Ручной раздел",none:"Без классификации"};
+const methods={rule:"Правило",llm:"Классификатор ИИ",manual:"Ручной раздел",product:"Уточнение задачи по товару",none:"Без классификации"};
 const statuses={success:"Пройден",skipped:"Пропущен",clarification:"Нужно уточнение",error:"Ошибка"};
 export function IntentStatisticsPanel() {
   const query=trpc.queryRouting.traces.useQuery();

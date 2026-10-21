@@ -2,6 +2,7 @@ import { generateEmbeddingVector } from "./embeddingClient";
 import { getCachedSectionChunks } from "./rag/sectionCache";
 import { extractDocumentSkus, lookupDocumentsForSku } from "./skuDocumentLookup";
 import { trackIntentStage } from "./intentTrace";
+import { clarifySearchFailure, hasProductSubject } from "./productQuestion";
 import { runIntentPipeline } from "./intentPipeline";
 import { composeAnswerSystemPrompt } from "./rag/answerSourcePolicy";
 import { eq, desc, sql } from "drizzle-orm";
@@ -69,6 +70,7 @@ export interface RAGQuery {
 }
 
 export interface RAGResponse {
+  needsClarification?: boolean;
   response: string;
   sources: Array<{
     documentId: number;
@@ -2503,6 +2505,7 @@ function isTooGenericCatalogQuery(query: string): boolean {
       q
     );
   const hasSpecificSignals =
+    hasProductSubject(query) || /(?:^|\s)[А-ЯЁA-Z]{2,8}(?:\s|$)/.test(query) ||
     /артикул|sku|sanext|универсаль|stabil|hp|модель|серия|труба|фитинг|\b\d{3,}\b/.test(
       q
     );
@@ -2966,39 +2969,8 @@ async function handleMetaQuery(query: string): Promise<string | null> {
   )}\n\nЗадайте вопрос по содержимому этих документов.`;
 }
 
-async function generateClarifyingResponse(
-  query: string
-): Promise<string> {
-  const db = await getDb();
-  if (!db) {
-    return `В документах нет информации о: ${query}`;
-  }
-
-  const docs = await db
-    .select({
-      filename: documents.filename,
-      docType: documents.docType,
-    })
-    .from(documents)
-    .where(eq(documents.status, "indexed"))
-    .orderBy(documents.filename);
-
-  if (!docs.length) {
-    return "В базе знаний пока нет документов. Загрузите материалы SANEXT, чтобы я смог помочь.";
-  }
-
-  const exampleDoc =
-    docs.find((doc) => doc.docType === "instruction") ??
-    docs[0];
-
-  return `В документах нет информации о: ${query}.
-
-Для уточнения ответа укажите, пожалуйста:
-• Модель или артикул изделия
-• Раздел (например, монтаж, эксплуатация, характеристики)
-• Диаметр/тип системы, если речь о трубах или фитингах
-
-Доступные материалы включают, например, «${exampleDoc.filename}».`;
+async function generateClarifyingResponse(query:string):Promise<string> {
+  return clarifySearchFailure(query);
 }
 
 async function fetchActiveSystemPrompt(): Promise<string> {
@@ -3188,11 +3160,12 @@ async function replyMaterialNotFound(
   start: number
 ): Promise<RAGResponse> {
   const suggestedTopics = await buildSuggestedTopics();
-  const text = /другую тему/i.test(response)
+  const text = /уточнит|\?/i.test(response)
     ? response
     : `${response.trim()}\n\nУточните название изделия или артикул и нужную информацию.`;
   return {
     response: text,
+    needsClarification: true,
     sources: [],
     suggestedTopics,
     responseTime: Date.now() - start,
@@ -4216,6 +4189,7 @@ export async function getAssistantStats() {
 }
 
 export const __testables = {
+  isTooGenericCatalogQuery,
   computeBm25Score,
   applyMmr,
   computeBoosts,
