@@ -4,6 +4,29 @@ import { getDb } from "./db";
 import { MySqlDialect } from "drizzle-orm/mysql-core";
 import { assortmentFamily, selectAssortment, catalogAssortmentResponse } from "./catalogAssortment";
 const fixtures=(names:string[])=>names.map((name,documentId)=>({name,documentId,filename:"catalog.md"}));
+it("returns the five pipe headings from the supplied SANEXT catalog instead of SKU sizes or tools",async()=>{
+  const names=["Труба SANEXT «Универсальная»","Труба SANEXT PE-Xa без кислородного барьера","Труба SANEXT «Стабил»","Труба SANEXT «Тёплый пол»","Труба SANEXT «Гофрированная»"];
+  const base={documentId:1,filename:"Трубы SANEXT.md"};
+  const results=[[],[
+    {...base,name:"Расширительная насадка для труб SANEXT «Стабил»"},
+    {...base,name:"Труба SANEXT «Универсальная» 16×2,2"},
+    {...base,name:"Труба SANEXT «Стабил» 20×2,9"},
+    {...base,name:"Труба SANEXT PE-Xa"},
+  ],[],[{...base,name:"Трубы SANEXT"}],[],names.map((name,index)=>({...base,name,sectionPath:`1.${index+1}`}))];let index=0;
+  vi.mocked(getDb).mockResolvedValue({select:()=>{
+    const rows=results[index++]??[];const chain:any={from:()=>chain,innerJoin:()=>chain,leftJoin:()=>chain,where:async()=>rows};return chain;
+  }} as any);
+  const response=await catalogAssortmentResponse("какая труба есть");
+  for(const name of names)expect(response?.response).toContain(`- ${name}\n`);
+  expect(response?.response.match(/^- /gm)).toHaveLength(5);
+  expect(response?.response).not.toContain("насадка");expect(response?.response).not.toContain("16×2,2");
+  expect(response?.response).toContain("О каком виде рассказать подробнее");
+  expect(response?.sources).toHaveLength(5);
+});
+it("collapses pipe sizes and excludes tools even without indexed line headings",()=>{
+  const entries=fixtures(["Труба SANEXT «Стабил» 16,2×2,6","Труба SANEXT «Стабил» 20×2,9","Расширительная насадка для труб SANEXT «Стабил»"]);
+  expect(selectAssortment(entries,assortmentFamily("какие трубы есть")!,"какие трубы есть").map(entry=>entry.name)).toEqual(["Труба SANEXT «Стабил»"]);
+});
 it("expands pipe groups inside a single generic pipe catalog",async()=>{
   const results=[[],[],[],[{documentId:1,filename:"Трубы SANEXT.md",name:"Трубы SANEXT"}],[
     {documentId:1,filename:"Трубы SANEXT.md",name:"Труба SANEXT Теплый пол",sectionPath:"1.1"},

@@ -10,12 +10,14 @@ const families = [/труб/i, /фитинг/i, /редуктор/i, /клапа
 export function assortmentFamily(query:string):RegExp|null {
   if (/паспорт|сертифик|монтаж|подключ|подход|совмест|температур|диаметр|толщин|цен[аыу]|стоим|какое давление/i.test(query)) return null;
   if (/лучше|отличи|выбрать|выбор|нужна|нужен/i.test(query))return null;
-  if (!/каки[еe]|какая\s+есть|какой\s+есть|какое\s+есть|какой ассортимент|ассортимент|перечисл|список|виды|типы/i.test(query)) return null;
+  if (!/каки[еe]|какая\s+есть|какой\s+есть|какое\s+есть|какая\s+труба\s+есть|какой ассортимент|ассортимент|перечисл|список|виды|типы/i.test(query)) return null;
   const matched=families.filter(pattern=>pattern.test(query));
   if(/редуктор/i.test(query))matched.push(/клапан(?=[\s\S]*редукцион)|редукцион(?=[\s\S]*клапан)/i);
   return matched.length?new RegExp(matched.map(pattern=>`(?:${pattern.source})`).join("|"),"i"):null;
 }
-type Entry={documentId:number;filename:string;name:string;sectionPath?:string|null;chunkIndex?:number;pageNumber?:number|null;kind?:"catalog"|"group"};
+type Entry={documentId:number;filename:string;name:string;sectionPath?:string|null;chunkIndex?:number;pageNumber?:number|null;kind?:"catalog"|"group"|"line"};
+const cleanName=(name:string)=>name.replace(/\.(?:md|pdf)$/i,"").replace(/_/g," ").replace(/^\d+(?:\.\d+)*\.?\s*/,"").trim();
+const pipeName=(name:string)=>/^(?:гофрированная\s+)?труб[аы](?:\s|$)/i.test(cleanName(name));
 const words=(value:string)=>value.toLowerCase().replace(/ё/g,"е").match(/[а-яa-z0-9]+/g)??[];
 const stem=(word:string)=>word.replace(/(?:иями|ами|ого|ему|ому|ыми|ими|ая|яя|ое|ее|ые|ие|ый|ий|ой|ых|их|ов|ам|ям|ах|ях|ы|и|а|я|у|ю|е|о)$/i,"");
 function qualifierMatches(query:string,candidate:string):boolean {
@@ -37,7 +39,10 @@ export function assortmentQualifiers(query:string):string[] {
 }
 export function selectAssortment(entries:Entry[],family:RegExp,query=""):Entry[] {
   const qualifiers=assortmentQualifiers(query);
-  if(family.test("трубы"))entries=[...entries].sort((a,b)=>Number(b.kind==="group")-Number(a.kind==="group"));
+  if(family.test("трубы")) {
+    const priority=(entry:Entry)=>entry.kind==="line"?2:entry.kind==="group"?1:0;
+    entries=[...entries].sort((a,b)=>priority(b)-priority(a));
+  }
   // Pipe and fitting catalogs define the lines presented before individual items.
   if(family.test("фитинги")&&!family.test("трубы")&&!family.test("клапан")) {
     const catalogs=entries.filter(entry=>entry.kind==="catalog"&&family.test(entry.name)
@@ -48,15 +53,15 @@ export function selectAssortment(entries:Entry[],family:RegExp,query=""):Entry[]
   }
   const seen=new Set<string>();
   const selected=entries.flatMap(entry=>{
-    const name=entry.name.replace(/\.(?:md|pdf)$/i,"").replace(/_/g," ").replace(/^\d+(?:\.\d+)*\.?\s*/,"").trim();
+    let name=cleanName(entry.name);
     if (!family.test(name)||/монтаж|характеристик|таблица|размер|гидравлич|инструкц|номенклатур|сертифик|паспорт|упоминание|значени[ея]|настройк|подбор|комплектующ/i.test(name)) return [];
-    const tokens=words(name);
     // A pipe must be the product itself, not a connection or accessory mentioning pipes.
     if(family.test("трубы")&&!family.test("клапан")&&!family.test("фитинги")) {
-      const firstProduct=tokens.find(word=>families.some(f=>f.test(word)));
-      if(!firstProduct||!/^труб(?:а|ы|у|е|ой|ами|ах)?$/.test(firstProduct))return [];
+      if(!pipeName(name))return [];
+      // Dimensional SKU variants belong to the same line.
+      name=name.replace(/\s+\d+(?:[.,]\d+)?\s*[xх×]\s*\d+(?:[.,]\d+)?(?:\s.*)?$/i,"").trim();
     }
-    const stems=tokens.map(stem);
+    const stems=words(name).map(stem);
     if(!qualifiers.every(qualifier=>stems.some(candidate=>qualifierMatches(qualifier,candidate))))return [];
     const key=stems.filter(word=>word!=="sanext"&&word!=="санекст").sort().join("|");
     if(seen.has(key))return [];seen.add(key);return [{...entry,name}];
@@ -64,6 +69,8 @@ export function selectAssortment(entries:Entry[],family:RegExp,query=""):Entry[]
   if(family.test("трубы")&&!family.test("фитинги")&&!family.test("клапан")) {
     const specific=selected.filter(entry=>words(entry.name).some(word=>!/^труб(?:а|ы|у|е|ой|ами|ах)?$/.test(word)&&!/^sanext$|^санекст$/.test(word)));
     if(specific.length) {
+      const lineDocuments=new Set(specific.filter(entry=>entry.kind==="line").map(entry=>entry.documentId));
+      if(lineDocuments.size)return specific.filter(entry=>!lineDocuments.has(entry.documentId)||entry.kind==="line");
       const groups=specific.filter(entry=>entry.kind==="group");
       const products=specific.filter(entry=>entry.kind!=="catalog");
       return groups.length?groups:products.length?products:specific;
@@ -75,7 +82,7 @@ export async function catalogAssortmentResponse(query:string):Promise<RAGRespons
   const family=assortmentFamily(query);if(!family)return null;
   const db=await getDb();if(!db)throw new Error("Database not available");
   const filter=and(eq(documents.docType,"catalog"),eq(documents.status,"indexed"));
-  const [automatic,manual,chunks,catalogs,groups]=await Promise.all([
+  const [automatic,manual,chunks,catalogs,groups,headings]=await Promise.all([
     db.select({documentId:documents.id,filename:documents.filename,name:products.name,groupName:productGroups.name,sectionName:sections.title,sectionPath:sections.sectionPath,pageNumber:products.pageNumber})
       .from(products).innerJoin(documents,eq(products.documentId,documents.id))
       .leftJoin(productGroups,and(eq(products.groupId,productGroups.id),eq(products.documentId,productGroups.documentId)))
@@ -91,10 +98,13 @@ export async function catalogAssortmentResponse(query:string):Promise<RAGRespons
     db.select({documentId:documents.id,filename:documents.filename,name:documents.title}).from(documents).where(filter),
     db.select({documentId:documents.id,filename:documents.filename,name:productGroups.name,sectionPath:productGroups.sectionPath})
       .from(productGroups).innerJoin(documents,eq(productGroups.documentId,documents.id)).where(filter),
+    db.select({documentId:documents.id,filename:documents.filename,name:sections.title,sectionPath:sections.sectionPath,pageNumber:sections.pageStart})
+      .from(sections).innerJoin(documents,eq(sections.documentId,documents.id)).where(filter),
   ]);
   const candidates:Entry[]=[...manual,...automatic.map(row=>({...row,name:row.name||row.groupName||row.sectionName||""})),
     ...((family.test("фитинги")||family.test("трубы"))?catalogs.map(row=>({...row,name:row.name||row.filename,kind:"catalog" as const})):[])];
   if(family.test("трубы")) {
+    for(const heading of headings)if(pipeName(heading.name))candidates.push({...heading,kind:"line"});
     for(const group of [...groups,...automatic.filter(row=>row.groupName).map(row=>({...row,name:row.groupName!}))]) {
       const catalog=catalogs.find(item=>item.documentId===group.documentId);
       const catalogName=catalog?.name||catalog?.filename||group.filename;
