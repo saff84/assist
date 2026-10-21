@@ -1,7 +1,8 @@
 import { generateEmbeddingVector } from "./embeddingClient";
 import { getCachedSectionChunks } from "./rag/sectionCache";
-import { readQueryRouting } from "./queryRoutingStore";
-import { resolveQueryRoute, routeDocumentTypes } from "../shared/queryRouting";
+import { extractDocumentSkus, lookupDocumentsForSku } from "./skuDocumentLookup";
+import { trackIntentStage } from "./intentTrace";
+import { runIntentPipeline } from "./intentPipeline";
 import { eq, desc, sql } from "drizzle-orm";
 
 import {
@@ -14,7 +15,8 @@ import {
 } from "../drizzle/schema";
 import { getDb } from "./db";
 import * as documentDb from "./documentDb";
-import { invokeLLM } from "./_core/llm";
+import { invokeLLM as invokeBaseLLM } from "./_core/llm";
+const invokeLLM = (input:Parameters<typeof invokeBaseLLM>[0]) => trackIntentStage("generation","Формирование ответа моделью",()=>invokeBaseLLM(input));
 import { getLlmSettingsForInvoke } from "./llmSettingsDb";
 import { getRagConfig } from "./rag/config";
 import { getSystemPromptTemplate } from "./rag/promptLoader";
@@ -3179,7 +3181,7 @@ function buildCompanyNoAnswerMessage(
   suggested: NonNullable<RAGResponse["suggestedTopics"]>
 ): string {
   const topicsHint = suggested.length
-    ? "Или выберите другую тему ниже."
+    ? "Уточните название изделия и что именно требуется узнать."
     : "Попробуйте переформулировать запрос.";
   return `В материалах о компании нет ответа на этот вопрос. ${topicsHint}`;
 }
@@ -3191,7 +3193,7 @@ async function replyMaterialNotFound(
   const suggestedTopics = await buildSuggestedTopics();
   const text = /другую тему/i.test(response)
     ? response
-    : `${response.trim()}\n\nЕсли вопрос про другую тему — выберите её ниже.`;
+    : `${response.trim()}\n\nУточните название изделия или артикул и нужную информацию.`;
   return {
     response: text,
     sources: [],
@@ -3215,7 +3217,7 @@ async function processCompanyKnowledgeQuery(
   start: number
 ): Promise<RAGResponse> {
   const suggestedTopics = await buildSuggestedTopics();
-  const assembled = companyKnowledge.readAssembledMarkdown().trim();
+  const assembled = await trackIntentStage("retrieval","Чтение базы о компании",async()=>companyKnowledge.readAssembledMarkdown().trim());
   const stats = companyKnowledge.getAssembledStats();
 
   if (!assembled || stats.sectionCount === 0) {
@@ -3380,20 +3382,18 @@ ${context.context}
   };
 }
 
-export async function processRAGQuery(
+export async function processRAGQuery(ragQuery:RAGQuery,options?:RAGOptions):Promise<RAGResponse> {
+  return runIntentPipeline(ragQuery,options,executeRAGQuery);
+}
+
+async function executeRAGQuery(
   ragQuery: RAGQuery,
   options?: RAGOptions
 ): Promise<RAGResponse> {
   const start = Date.now();
-  const matchedRoute = resolveQueryRoute(ragQuery.query, await readQueryRouting());
-  if (matchedRoute) {
-    options = {...options, forceDocumentType:matchedRoute.target,
-      allowedDocumentTypes:routeDocumentTypes(matchedRoute.target)};
-    console.log(`[RAG] Query route: rule=${matchedRoute.ruleName}, term=${matchedRoute.term}, target=${matchedRoute.target}`);
-  }
   const config = getRagConfig();
   const llmSettings = await getLlmSettingsForInvoke();
-  const quickResponsesEnabled = llmSettings.useQuickResponses;
+  const quickResponsesEnabled = llmSettings.useQuickResponses && !options?.requireSynthesis;
   const topK = options?.topK ?? config.retrieval.mmr.resultCount;
   const forcedDocType = options?.forceDocumentType;
   const docTypeLabel = (docType: string) => {
@@ -3418,7 +3418,7 @@ export async function processRAGQuery(
   };
 
   // Document-list meta questions work regardless of category
-  const metaResponse = matchedRoute ? null : await handleMetaQuery(ragQuery.query);
+  const metaResponse = options?.allowedDocumentTypes ? null : await handleMetaQuery(ragQuery.query);
   if (metaResponse) {
     return {
       response: metaResponse,
@@ -3436,12 +3436,31 @@ export async function processRAGQuery(
   // Certificates & passports: file search by title → preview + download (no chunk RAG)
   if (forcedDocType === "certificate" || forcedDocType === "passport") {
     const stopwords = createStopwordSet(config.retrieval.stopwords.extra ?? []);
-    const hits = await findBestDocumentsByTitle(
-      ragQuery.query,
-      forcedDocType,
-      stopwords,
-      3
-    );
+    const skus = extractDocumentSkus(ragQuery.query);
+    let resolutionPrefix = "";
+    let hits;
+    const lookupReply = (response:string):RAGResponse => ({response,sources:[],
+      responseTime:Date.now()-start,tokensUsed:Math.ceil(response.length/TOKEN_CHAR_RATIO)});
+    if(skus.length>1) {
+      return lookupReply(`В запросе несколько артикулов: ${skus.join(", ")}. Укажите один артикул для поиска документа.`);
+    }
+    if(skus.length===1) {
+      const result=await trackIntentStage("sku","Поиск товарной группы по точному артикулу",()=>lookupDocumentsForSku(skus[0],forcedDocType,stopwords));
+      if(result.status==="unknown") {
+        return lookupReply(`Не удалось определить товарную группу артикула **${result.sku}** в проиндексированных товарах. Уточните артикул или название товарной группы.`);
+      }
+      if(result.status==="ambiguous") {
+        return lookupReply(`Артикул **${result.sku}** найден у нескольких товарных групп. Уточните нужную:\n\n${result.groups.map(group=>`- ${group}`).join("\n")}`);
+      }
+      resolutionPrefix=`Артикул **${result.sku}** → ${result.groupKind==="group"?"товарная группа":"товар (группа не назначена)"}: **${result.group}**.\n\n`;
+      hits=result.documents;
+      console.log(`[RAG] Document SKU lookup: sku=${result.sku}, group=${result.group}, type=${forcedDocType}, hits=${hits.length}`);
+      if(!hits.length) {
+        return lookupReply(`${resolutionPrefix}В разделе «${docTypeLabel(forcedDocType)}» не найден документ с подходящим названием для этой группы. Поиск выполнен по названию; применимость документа к артикулу не подтверждена.`);
+      }
+    } else {
+      hits = await trackIntentStage("retrieval","Поиск PDF по названию",()=>findBestDocumentsByTitle(ragQuery.query,forcedDocType,stopwords,3));
+    }
 
     if (hits.length > 0) {
       const kind = forcedDocType === "certificate" ? "сертификат" : "паспорт";
@@ -3457,11 +3476,11 @@ export async function processRAGQuery(
               .join("\n")}\n\nНиже приложил самые близкие варианты.`;
 
       return {
-        response,
+        response: resolutionPrefix + response,
         sources: [],
         attachments: hits.map(toDocumentAttachment),
         responseTime: Date.now() - start,
-        tokensUsed: Math.ceil(response.length / TOKEN_CHAR_RATIO),
+        tokensUsed: Math.ceil((resolutionPrefix + response).length / TOKEN_CHAR_RATIO),
       };
     }
 
@@ -3471,11 +3490,11 @@ export async function processRAGQuery(
     return replyMaterialNotFound(clarification, start);
   }
 
-  const retrieval = await retrieveAndScoreChunks(
+  const retrieval = await trackIntentStage("retrieval","Поиск и ранжирование фрагментов",()=>retrieveAndScoreChunks(
     ragQuery.query,
     config,
     options
-  );
+  ));
 
   const fallbackThreshold =
     config.retrieval.fallbackThreshold ??
@@ -4106,7 +4125,7 @@ ${context.context}
     );
   const suggestedTopics = materialMissing ? await buildSuggestedTopics() : undefined;
   if (materialMissing && suggestedTopics?.length && !/другую тему/i.test(messageContent)) {
-    messageContent = `${messageContent.trim()}\n\nЕсли вопрос про другую тему — выберите её ниже.`;
+    messageContent = `${messageContent.trim()}\n\nУточните название изделия или артикул и нужную информацию.`;
   }
 
   // Debug logging: log LLM response

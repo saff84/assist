@@ -1,3 +1,4 @@
+import { ChatGreeting } from "@/components/ChatGreeting";
 import { useState, useRef, useEffect, type CSSProperties } from "react";
 import { Loader2, Send, X, MessageCircle, RotateCcw } from "lucide-react";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
@@ -14,15 +15,6 @@ interface Message {
 }
 
 type ChatTopic = "products" | "instructions" | "installation" | "certificates" | "passports" | "warranty";
-type TopicChoice = ChatTopic | "company";
-type ForcedDocType =
-  | "catalog"
-  | "instruction"
-  | "certificate"
-  | "passport"
-  | "warranty_faq"
-  | "installation";
-
 export interface WebChatWidgetProps {
   title?: string;
   subtitle?: string;
@@ -51,73 +43,6 @@ const stageLabel = (stage: ProcessingStage) => {
   }
 };
 
-const TOPIC_COPY: Record<
-  TopicChoice,
-  { label: string; hint: string; forced: ForcedDocType | null }
-> = {
-  company: {
-    label: "О компании",
-    hint: "Напишите вопрос о компании в поле ниже.",
-    forced: null,
-  },
-  products: {
-    label: "Товары",
-    hint: "Напишите товар, артикул или что нужно узнать.",
-    forced: "catalog",
-  },
-  instructions: {
-    label: "Инструкции",
-    hint: "Напишите изделие и какой этап монтажа или инструкции нужен.",
-    forced: "instruction",
-  },
-  installation: {
-    label: "Монтаж и совместимость оборудования",
-    hint: "Напишите линейку, узел или этап: совместимость, ошибка монтажа или порядок сборки.",
-    forced: "installation",
-  },
-  certificates: {
-    label: "Сертификаты",
-    hint: "Напишите товар или артикул, по которому нужен сертификат.",
-    forced: "certificate",
-  },
-  passports: {
-    label: "Паспорта",
-    hint: "Напишите изделие или артикул, по которому нужен паспорт.",
-    forced: "passport",
-  },
-  warranty: {
-    label: "Гарантия",
-    hint: "Напишите товар и суть вопроса по гарантии.",
-    forced: "warranty_faq",
-  },
-};
-
-function topicChoices(available: {
-  hasInstructions: boolean;
-  hasCertificates: boolean;
-  hasPassports: boolean;
-  hasWarrantyFaq: boolean;
-  hasInstallation: boolean;
-}): TopicChoice[] {
-  const list: TopicChoice[] = ["company", "products"];
-  if (available.hasInstallation) list.push("installation");
-  if (available.hasInstructions) list.push("instructions");
-  if (available.hasCertificates) list.push("certificates");
-  if (available.hasPassports) list.push("passports");
-  if (available.hasWarrantyFaq) list.push("warranty");
-  return list;
-}
-
-function offersTopicChange(msg: Message): boolean {
-  if (msg.type !== "assistant") return false;
-  if (msg.attachments?.length) return false;
-  if (msg.suggestedTopics && msg.suggestedTopics.length > 0) return true;
-  if (msg.sources?.length) return false;
-  return /в материалах о компании нет|нет документов по теме|в документах нет информации|нет информации о|не найден[аоы]?\s+информац|информаци[яи]\s+отсутству|не удалось найти|не располагаю|выберите другую тему|выберите её ниже/i.test(
-    msg.content
-  );
-}
-
 function resolveApiBaseUrl(apiBaseUrl?: string): string {
   if (apiBaseUrl?.trim()) {
     return apiBaseUrl.trim().replace(/\/+$/, "");
@@ -130,7 +55,7 @@ function resolveApiBaseUrl(apiBaseUrl?: string): string {
 
 export function WebChatWidget({
   title = "SANEXT Assistant",
-  subtitle = "Выберите тему и задайте вопрос",
+  subtitle = "Продукция, монтаж и документы SANEXT",
   position = "bottom-right",
   apiBaseUrl,
 }: WebChatWidgetProps) {
@@ -145,32 +70,9 @@ export function WebChatWidget({
   const [processingStage, setProcessingStage] = useState<ProcessingStage>("idle");
   const [isSending, setIsSending] = useState(false);
   const stageTimers = useRef<Array<ReturnType<typeof setTimeout>>>([]);
-  const [topic, setTopic] = useState<TopicChoice | null>(null);
-  const [topicBarOpen, setTopicBarOpen] = useState(false);
-  const [availableTopics, setAvailableTopics] = useState({
-    hasInstructions: false,
-    hasCertificates: false,
-    hasPassports: false,
-    hasWarrantyFaq: false,
-    hasInstallation: false,
-  });
-
   useEffect(() => {
     widgetApi.current = new WidgetApiClient(resolvedApiBaseUrl);
-    widgetApi.current
-      .getTopics()
-      .then(setAvailableTopics)
-      .catch(() => {
-        setAvailableTopics({
-          hasInstructions: false,
-          hasCertificates: false,
-          hasPassports: false,
-          hasWarrantyFaq: false,
-          hasInstallation: false,
-        });
-      });
   }, [resolvedApiBaseUrl]);
-
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -204,8 +106,8 @@ export function WebChatWidget({
   };
 
   const handleSendMessage = async () => {
-    if (!input.trim() || !topic || processingStage !== "idle" || isSending) return;
-    const forced = TOPIC_COPY[topic].forced;
+    if (!input.trim() || processingStage !== "idle" || isSending) return;
+
 
     const userMessage: Message = {
       id: `msg-${Date.now()}`,
@@ -234,7 +136,7 @@ export function WebChatWidget({
       const response = await widgetApi.current.askAssistant({
         query,
         sessionId,
-        ...(forced ? { forceDocumentType: forced } : {}),
+
       });
       appendAssistantMessage(
         response.response,
@@ -266,29 +168,8 @@ export function WebChatWidget({
     stageTimers.current = [];
     setMessages([]);
     setInput("");
-    setTopic(null);
-    setTopicBarOpen(false);
     setProcessingStage("idle");
     setSessionId(`session-${Date.now()}-${Math.random()}`);
-  };
-
-  const choices = topicChoices(availableTopics);
-
-  const handlePickTopic = (picked: TopicChoice) => {
-    if (processingStage !== "idle" || isSending) return;
-    if (picked === topic) return;
-    setTopic(picked);
-    setTopicBarOpen(false);
-    if (messages.length === 0) return;
-    const copy = TOPIC_COPY[picked];
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `msg-${Date.now()}`,
-        type: "assistant",
-        content: `Тема изменена на «${copy.label}». ${copy.hint}`,
-      },
-    ]);
   };
 
   const positionStyle: CSSProperties =
@@ -321,7 +202,7 @@ export function WebChatWidget({
             <p className="sanext-widget-brand-subtitle">{subtitle}</p>
           </div>
           <div className="sanext-widget-header-actions">
-            {(messages.length > 0 || topic) && (
+            {(messages.length > 0) && (
               <button
                 type="button"
                 onClick={handleNewQuestion}
@@ -364,27 +245,8 @@ export function WebChatWidget({
 
         <div className="sanext-widget-messages space-y-3">
           {messages.length === 0 ? (
-            <div className="space-y-3">
-              <div className="sanext-widget-bubble sanext-widget-bubble-assistant">
-                <div className="font-semibold mb-1 text-[15px]">Здравствуйте!</div>
-                <div className="text-[var(--sx-muted)] text-[13px]">
-                  Выберите тему вопроса — так я буду искать в нужных документах. Затем напишите
-                  вопрос в поле ниже.
-                </div>
-                <TopicChips
-                  choices={choices}
-                  active={topic}
-                  disabled={processingStage !== "idle" || isSending}
-                  onPick={handlePickTopic}
-                  prominent
-                />
-                {topic && <p className="sanext-widget-topic-picked">{TOPIC_COPY[topic].hint}</p>}
-              </div>
-              <p className="sanext-widget-hint">
-                {topic
-                  ? `Тема «${TOPIC_COPY[topic].label}» выбрана — можно писать вопрос.`
-                  : "Сначала выберите тему, потом задайте вопрос."}
-              </p>
+            <div className="sanext-widget-bubble sanext-widget-bubble-assistant space-y-3">
+              <ChatGreeting apiBaseUrl={resolvedApiBaseUrl}/>
             </div>
           ) : (
             messages.map((msg) => (
@@ -414,17 +276,7 @@ export function WebChatWidget({
                       <MessageSources sources={msg.sources} />
                     </div>
                   )}
-                  {offersTopicChange(msg) && (
-                    <div className="sanext-widget-topic-change">
-                      <div className="sanext-widget-topic-change-label">Выберите другую тему</div>
-                      <TopicChips
-                        choices={choices}
-                        active={topic}
-                        disabled={processingStage !== "idle" || isSending}
-                        onPick={handlePickTopic}
-                      />
-                    </div>
-                  )}
+
                 </div>
               </div>
             ))
@@ -432,51 +284,19 @@ export function WebChatWidget({
           <div ref={messagesEndRef} />
         </div>
 
-        {messages.length > 0 && (
-          <div className="sanext-widget-topicbar">
-            <div className="sanext-widget-topicbar-row">
-              <div className="sanext-widget-topicbar-label">
-                {topic ? `Тема: ${TOPIC_COPY[topic].label}` : "Тема не выбрана"}
-              </div>
-              <button
-                type="button"
-                className="sanext-widget-topicbar-toggle"
-                onClick={() => setTopicBarOpen((open) => !open)}
-                disabled={processingStage !== "idle" || isSending}
-              >
-                {topicBarOpen ? "Скрыть" : "Сменить тему"}
-              </button>
-            </div>
-            {topicBarOpen && (
-              <TopicChips
-                choices={choices}
-                active={topic}
-                disabled={processingStage !== "idle" || isSending}
-                onPick={handlePickTopic}
-              />
-            )}
-          </div>
-        )}
-
         <div className="sanext-widget-footer">
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-            placeholder={
-              !topic
-                ? "Сначала выберите тему…"
-                : topic === "company"
-                  ? "Вопрос о компании…"
-                  : `Вопрос по теме «${TOPIC_COPY[topic].label}»…`
-            }
-            disabled={!topic || isSending || processingStage !== "idle"}
+            placeholder="Задайте вопрос об изделии или укажите артикул…"
+            disabled={isSending || processingStage !== "idle"}
             className="sanext-widget-input"
           />
           <button
             type="button"
             onClick={handleSendMessage}
-            disabled={!topic || !input.trim() || isSending || processingStage !== "idle"}
+            disabled={!input.trim() || isSending || processingStage !== "idle"}
             className="sanext-widget-send"
             aria-label="Отправить"
           >
@@ -488,36 +308,6 @@ export function WebChatWidget({
           </button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function TopicChips({
-  choices,
-  active,
-  disabled,
-  onPick,
-  prominent,
-}: {
-  choices: TopicChoice[];
-  active: TopicChoice | null;
-  disabled?: boolean;
-  onPick: (topic: TopicChoice) => void;
-  prominent?: boolean;
-}) {
-  return (
-    <div className={`sanext-widget-topics ${prominent ? "sanext-widget-topics-prominent" : ""}`}>
-      {choices.map((choice) => (
-        <button
-          key={choice}
-          type="button"
-          className={`sanext-widget-topic ${active === choice ? "sanext-widget-topic-active" : ""}`}
-          onClick={() => onPick(choice)}
-          disabled={disabled}
-        >
-          {TOPIC_COPY[choice].label}
-        </button>
-      ))}
     </div>
   );
 }

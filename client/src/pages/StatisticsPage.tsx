@@ -2,6 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, MessageSquare, Clock, TrendingUp, Globe, Briefcase, BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { IntentStatisticsPanel } from "@/components/IntentStatisticsPanel";
 
 export default function StatisticsPage() {
   // Fetch statistics
@@ -28,6 +29,7 @@ export default function StatisticsPage() {
       </div>
 
       {/* Key Metrics */}
+      <IntentStatisticsPanel />
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card className="relative overflow-hidden transition-all hover:shadow-md hover:border-primary/50">
           <div className="absolute top-0 right-0 w-20 h-20 bg-primary/5 rounded-bl-full" />

@@ -16,9 +16,14 @@ export const routingRuleSchema = z.object({
   enabled: z.boolean(),
   target: routeTargetSchema,
   terms: z.array(z.string().trim().min(1).max(100)).min(1).max(100),
-});
+  additionalTargets: z.array(routeTargetSchema).max(6).optional(),
+}).refine(rule => !rule.additionalTargets?.length ||
+  (["catalog","instruction","installation","warranty_faq"].includes(rule.target) &&
+   rule.additionalTargets.every(target=>["catalog","instruction","installation","warranty_faq"].includes(target))),
+  {message:"Несколько баз поддерживаются для каталога, монтажа, инструкций и гарантии. Для поиска PDF или компании выберите один раздел."});
 export const queryRoutingSchema = z.object({
   enabled: z.boolean(),
+  fallback: z.enum(["llm","company"]).default("llm"),
   rules: z.array(routingRuleSchema).max(50),
 }).refine(value => new Set(value.rules.map(rule => rule.id)).size === value.rules.length,
   {message: "Идентификаторы правил должны быть уникальными"});
@@ -26,6 +31,7 @@ export type QueryRoutingConfig = z.infer<typeof queryRoutingSchema>;
 export type RouteTarget = z.infer<typeof routeTargetSchema>;
 export const defaultQueryRouting: QueryRoutingConfig = {
   enabled: true,
+  fallback: "llm",
   rules: [
     {id:"installation", name:"Вопросы о монтаже", enabled:true, target:"installation", terms:["монтаж*", "установк*", "подключени*"]},
     {id:"certificates", name:"Поиск сертификатов", enabled:true, target:"certificate", terms:["сертификат*", "сертификаци*"]},
@@ -47,7 +53,7 @@ export function resolveQueryRoute(query: string, config: QueryRoutingConfig) {
   for (const rule of config.rules) {
     if (!rule.enabled) continue;
     const term = rule.terms.find(term => matchRouteTerm(query, term));
-    if (term) return {ruleId:rule.id, ruleName:rule.name, target:rule.target, term};
+    if (term) return {ruleId:rule.id, ruleName:rule.name, target:rule.target, additionalTargets:rule.additionalTargets ?? [], term};
   }
   return null;
 }

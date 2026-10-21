@@ -3,6 +3,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
+import { ChatGreetingSettingsPanel } from "@/components/ChatGreetingSettingsPanel";
 import { Code2, Copy, ExternalLink, Globe, Loader2, MessageSquare } from "lucide-react";
 
 export default function WidgetPage() {
@@ -87,6 +88,7 @@ export default function WidgetPage() {
           </Card>
         </div>
 
+        <ChatGreetingSettingsPanel />
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -143,7 +145,7 @@ export default function WidgetPage() {
     window.SanextChatWidget && window.SanextChatWidget.init({
       apiBaseUrl: API,
       title: 'SANEXT Assistant',
-      subtitle: 'Выберите тему и задайте вопрос',
+      subtitle: 'Продукция, монтаж и документы SANEXT',
       position: 'bottom-right'
     });
   };

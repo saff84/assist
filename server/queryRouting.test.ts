@@ -38,4 +38,10 @@ describe("query routing",()=>{
     expect(queryRoutingSchema.safeParse({...config,rules:[{...config.rules[0],target:"all"}]}).success).toBe(false);
     expect(queryRoutingSchema.safeParse({...config,rules:[config.rules[0],config.rules[0]]}).success).toBe(false);
   });
+  it("upgrades existing settings and allows multiple knowledge bases only for content answers",()=>{
+    const {fallback,...legacy}=defaultQueryRouting;
+    expect(queryRoutingSchema.parse(legacy).fallback).toBe("llm");
+    expect(queryRoutingSchema.safeParse({...defaultQueryRouting,rules:[{...defaultQueryRouting.rules[0],additionalTargets:["catalog"]}]}).success).toBe(true);
+    expect(queryRoutingSchema.safeParse({...defaultQueryRouting,rules:[{...defaultQueryRouting.rules[1],additionalTargets:["catalog"]}]}).success).toBe(false);
+  });
 });

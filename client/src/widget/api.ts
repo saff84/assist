@@ -1,3 +1,4 @@
+import { chatGreetingSchema, type ChatGreetingSettings } from "@shared/chatGreeting";
 export type WidgetDocumentType =
   | "catalog"
   | "instruction"
@@ -90,6 +91,12 @@ export class WidgetApiClient {
       throw new Error("Failed to load chat topics");
     }
     return response.json() as Promise<WidgetTopics>;
+  }
+
+  async getGreeting(signal?:AbortSignal):Promise<ChatGreetingSettings> {
+    const response=await fetch(this.url("/api/widget/greeting"),{cache:"no-store",signal});
+    if(!response.ok)throw new Error("Не удалось загрузить приветствие");
+    return chatGreetingSchema.parse(await response.json());
   }
 
   async askAssistant(input: {

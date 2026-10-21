@@ -32,12 +32,12 @@ export const widgetAdminRouter = router({
       websiteQueries = sites.reduce((sum, site) => sum + site.chatCount, 0);
     }
 
-    const widgetAssetVersion = "20261007b";
+    const widgetAssetVersion = "20261021-greeting";
     const embedSnippet = `<script
   src="${publicBaseUrl}/chat-widget.js?v=${widgetAssetVersion}"
   data-api-url="${publicBaseUrl}"
   data-title="SANEXT Assistant"
-  data-subtitle="Выберите тему и задайте вопрос"
+  data-subtitle="Продукция, монтаж и документы SANEXT"
   data-position="bottom-right"
   defer
 ></script>`;

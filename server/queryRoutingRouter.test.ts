@@ -16,4 +16,7 @@ it.each([null,"editor","user"])("rejects unauthorized settings access for %s",as
   await expect(caller(role).get()).rejects.toMatchObject({code:"FORBIDDEN"});
   await expect(caller(role).save(defaultQueryRouting)).rejects.toMatchObject({code:"FORBIDDEN"});
   await expect(caller(role).preview({query:"монтаж",config:defaultQueryRouting})).rejects.toMatchObject({code:"FORBIDDEN"});
+  await expect(caller(role).traces()).rejects.toMatchObject({code:"FORBIDDEN"});
+  await expect(caller(role).recommendations()).rejects.toMatchObject({code:"FORBIDDEN"});
+  await expect(caller(role).review({id:"a".repeat(64),action:"dismiss"})).rejects.toMatchObject({code:"FORBIDDEN"});
 });

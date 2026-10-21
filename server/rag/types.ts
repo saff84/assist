@@ -84,6 +84,7 @@ export interface RAGOptions {
   includeDiagnostics?: boolean;
   forceDocumentType?: DocumentType;
   allowedDocumentTypes?: DocumentType[];
+  requireSynthesis?: boolean;
   disableReranker?: boolean;
 }
 

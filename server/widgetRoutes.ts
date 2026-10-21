@@ -5,6 +5,7 @@ import * as faqDb from "./faqDb";
 import * as ragModule from "./ragModule";
 import { applyWidgetCors } from "./_core/widgetCors";
 import { trackWidgetOrigin } from "./widgetSitesDb";
+import { readChatGreeting } from "./chatGreetingStore";
 
 const chatInputSchema = z.object({
   query: z.string().min(1),
@@ -63,6 +64,12 @@ setInterval(() => {
 }, 5 * 60_000).unref?.();
 
 export function registerWidgetRoutes(app: Express) {
+  app.get("/api/widget/greeting",async(req:Request,res:Response)=>{
+    if(!applyWidgetCors(req,res)&&req.headers.origin){res.status(403).json({error:"Origin is not allowed"});return;}
+    res.setHeader("Cache-Control","no-store");
+    try{res.json(await readChatGreeting());}
+    catch(error){console.error("[Widget] Greeting settings failed",error);res.status(500).json({error:"Failed to load greeting"});}
+  });
   app.get("/api/widget/topics", async (req: Request, res: Response) => {
     if (!applyWidgetCors(req, res) && req.headers.origin) {
       res.status(403).json({ error: "Origin is not allowed" });

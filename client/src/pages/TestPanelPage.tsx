@@ -1,3 +1,4 @@
+import { ChatGreeting } from "@/components/ChatGreeting";
 import { useState, useRef, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -18,7 +19,7 @@ interface Message {
     filename: string;
     title?: string | null;
     fileType: string;
-    docType: "catalog" | "instruction" | "general" | "certificate" | "passport" | "warranty_faq" | "installation";
+    docType: "catalog" | "instruction" | "general" | "certificate" | "passport" | "warranty_faq" | "installation" | "company";
     previewUrl: string;
     downloadUrl: string;
   }>;
@@ -63,29 +64,13 @@ const stageLabel = (stage: ProcessingStage) => {
   }
 };
 
-type ChatTopic = "products" | "instructions" | "installation" | "certificates" | "passports" | "warranty";
-type ForcedDocType =
-  | "catalog"
-  | "instruction"
-  | "certificate"
-  | "passport"
-  | "warranty_faq"
-  | "installation";
-
 export default function TestPanelPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const [sessionId] = useState(() => `session-${Date.now()}-${Math.random()}`);
+  const [sessionId,setSessionId] = useState(() => `session-${Date.now()}-${Math.random()}`);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [processingStage, setProcessingStage] = useState<ProcessingStage>("idle");
   const stageTimers = useRef<Array<ReturnType<typeof setTimeout>>>([]);
-  const [topic, setTopic] = useState<ChatTopic | null>(null);
-  const [forceDocumentType, setForceDocumentType] = useState<ForcedDocType | null>(null);
-  const { data: availableTopics } = trpc.document.getAvailableChatTopics.useQuery(undefined, {
-    staleTime: 60_000,
-    refetchOnWindowFocus: false,
-  });
-
   useEffect(
     () => () => {
       stageTimers.current.forEach((timer) => clearTimeout(timer));
@@ -118,7 +103,7 @@ export default function TestPanelPage() {
   }, [messages]);
 
   const handleSendMessage = async () => {
-    if (!input.trim() || processingStage !== "idle" || !forceDocumentType) return;
+    if (!input.trim() || processingStage !== "idle") return;
 
     // Add user message
     const userMessage: Message = {
@@ -148,7 +133,7 @@ export default function TestPanelPage() {
       query: input,
       sessionId,
       source: "test",
-      forceDocumentType,
+
     });
       stageTimers.current.forEach((timer) => clearTimeout(timer));
       stageTimers.current = [];
@@ -174,46 +159,6 @@ export default function TestPanelPage() {
     }
   };
 
-  const handlePickTopic = (picked: ChatTopic) => {
-    if (processingStage !== "idle") return;
-    setTopic(picked);
-    const forced: ForcedDocType =
-      picked === "products"
-        ? "catalog"
-        : picked === "instructions"
-          ? "instruction"
-          : picked === "installation"
-            ? "installation"
-          : picked === "certificates"
-            ? "certificate"
-            : picked === "passports"
-              ? "passport"
-              : "warranty_faq";
-    setForceDocumentType(forced);
-
-    const followUp =
-      picked === "products"
-        ? "Уточните, пожалуйста: какой товар (артикул/наименование) и что именно нужно — характеристики, подбор/совместимость, комплектация?"
-        : picked === "instructions"
-          ? "Уточните, пожалуйста: по какому изделию/системе нужен монтаж или инструкция и какой этап вас интересует?"
-          : picked === "installation"
-            ? "Уточните линейку, узел или этап: совместимость соединений, ошибка монтажа или порядок сборки."
-          : picked === "certificates"
-            ? "Уточните, пожалуйста: по какому товару (артикул/наименование) нужен сертификат и какой именно (например, соответствия/пожарный/гигиенический)?"
-            : picked === "passports"
-              ? "Уточните, пожалуйста: по какому изделию/модели нужен паспорт и какой раздел/параметры вас интересуют?"
-              : "Уточните, пожалуйста: по какому товару (артикул/наименование) вопрос по гарантии и в чём суть обращения (симптом/проблема/дата покупки)?";
-
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `msg-${Date.now()}`,
-        type: "assistant",
-        content: `Здравствуйте! Чтобы точнее искать по базе знаний, уточню: ${followUp}`,
-      },
-    ]);
-  };
-
   return (
     <div className="space-y-6">
       <div>
@@ -237,7 +182,7 @@ export default function TestPanelPage() {
                   </CardTitle>
                   <CardDescription>Задавайте вопросы для тестирования ассистента</CardDescription>
                 </div>
-                {(messages.length > 0 || forceDocumentType) && (
+                {(messages.length > 0) && (
                   <Button
                     type="button"
                     size="sm"
@@ -246,8 +191,7 @@ export default function TestPanelPage() {
                       if (processingStage !== "idle" || askMutation.isPending) return;
                       setMessages([]);
                       setInput("");
-                      setTopic(null);
-                      setForceDocumentType(null);
+                      setSessionId(`session-${Date.now()}-${Math.random()}`);
                       setProcessingStage("idle");
                     }}
                     disabled={processingStage !== "idle" || askMutation.isPending}
@@ -264,86 +208,8 @@ export default function TestPanelPage() {
             </CardHeader>
             <CardContent className="flex-1 min-h-0 overflow-y-auto space-y-4 pb-4 pt-4">
               {messages.length === 0 && !askMutation.isPending ? (
-                <div className="flex flex-col items-center justify-center h-full text-center py-10">
-                  <div className="w-full max-w-2xl text-left">
-                    <div className="p-4 rounded-lg border bg-muted/40">
-                      <div className="font-semibold mb-1">Здравствуйте!</div>
-                      <div className="text-sm text-muted-foreground">
-                        Чтобы точнее искать по базе знаний, выберите тематику вопроса:
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={topic === "products" ? "default" : "outline"}
-                          onClick={() => handlePickTopic("products")}
-                          disabled={processingStage !== "idle"}
-                        >
-                          Вопрос по: Товарам
-                        </Button>
-                        {availableTopics?.hasInstallation && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={topic === "installation" ? "default" : "outline"}
-                            onClick={() => handlePickTopic("installation")}
-                            disabled={processingStage !== "idle"}
-                          >
-                            Вопрос по: Монтажу и совместимости
-                          </Button>
-                        )}
-                        {availableTopics?.hasInstructions && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={topic === "instructions" ? "default" : "outline"}
-                            onClick={() => handlePickTopic("instructions")}
-                            disabled={processingStage !== "idle"}
-                          >
-                            Вопрос по: Инструкциям
-                          </Button>
-                        )}
-                        {availableTopics?.hasCertificates && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={topic === "certificates" ? "default" : "outline"}
-                            onClick={() => handlePickTopic("certificates")}
-                            disabled={processingStage !== "idle"}
-                          >
-                            Вопрос по: Сертификатам
-                          </Button>
-                        )}
-                        {availableTopics?.hasPassports && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={topic === "passports" ? "default" : "outline"}
-                            onClick={() => handlePickTopic("passports")}
-                            disabled={processingStage !== "idle"}
-                          >
-                            Вопрос по: Паспортам
-                          </Button>
-                        )}
-                        {availableTopics?.hasWarrantyFaq && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={topic === "warranty" ? "default" : "outline"}
-                            onClick={() => handlePickTopic("warranty")}
-                            disabled={processingStage !== "idle"}
-                          >
-                            Вопрос по: По гарантии
-                          </Button>
-                        )}
-                      </div>
-                      <div className="mt-3 text-xs text-muted-foreground">
-                        {forceDocumentType
-                          ? "Теперь ответьте на уточняющий вопрос (в чате появится сообщение) и отправьте ответ ниже."
-                          : "Сначала выберите тематику."}
-                      </div>
-                    </div>
-                  </div>
+                <div className="p-4 rounded-lg border bg-muted/40 space-y-3">
+                  <ChatGreeting />
                 </div>
               ) : (
                 <>
@@ -418,8 +284,8 @@ export default function TestPanelPage() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
-              placeholder={forceDocumentType ? "Введите сообщение..." : "Выберите тематику выше..."}
-              disabled={askMutation.isPending || processingStage !== "idle" || !forceDocumentType}
+              placeholder="Задайте вопрос об изделии или укажите артикул…"
+              disabled={askMutation.isPending || processingStage !== "idle"}
               className="flex-1"
             />
             <Button
@@ -427,8 +293,7 @@ export default function TestPanelPage() {
               disabled={
                 !input.trim() ||
                 askMutation.isPending ||
-                processingStage !== "idle" ||
-                !forceDocumentType
+                processingStage !== "idle"
               }
               className="gap-2 shrink-0"
               size="default"
