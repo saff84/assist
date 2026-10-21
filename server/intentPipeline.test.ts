@@ -8,6 +8,13 @@ it("answers a catalog assortment query without single-chunk search or classifica
   expect(response.response).toContain("Линейки труб");
   expect(execute).not.toHaveBeenCalled();expect(classifyQueryIntent).not.toHaveBeenCalled();
 });
+it("keeps an empty product assortment lookup in the product base and records clarification",async()=>{
+  vi.mocked(catalogAssortmentResponse).mockResolvedValueOnce({response:"Уточните категорию товара",needsClarification:true,sources:[],tokensUsed:0,responseTime:0});
+  const execute=vi.fn();
+  await runIntentPipeline(input("какие есть редукционные клапаны"),undefined,execute);
+  expect(execute).not.toHaveBeenCalled();expect(classifyQueryIntent).not.toHaveBeenCalled();
+  expect(saveIntentTrace).toHaveBeenCalledWith(expect.objectContaining({outcome:"clarification",targets:["catalog"]}));
+});
 vi.mock("./queryRoutingStore",()=>({readQueryRouting:vi.fn()}));
 vi.mock("./intentClassifier",()=>({classifyQueryIntent:vi.fn()}));
 vi.mock("./intentTrace",async original=>({...await original<typeof import("./intentTrace")>(),listIntentTraces:vi.fn().mockResolvedValue([]),saveIntentTrace:vi.fn().mockResolvedValue(undefined)}));

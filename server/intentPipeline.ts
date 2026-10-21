@@ -23,6 +23,10 @@ export async function runIntentPipeline(
         trace.method=rule?"rule":"product";trace.targets=["catalog"];trace.searchQuery=ragQuery.query;
         const overview=await trackIntentStage("retrieval","Сбор групп и линеек из индексированных каталогов",()=>catalogAssortmentResponse(ragQuery.query));
         if(overview) {
+          if(overview.needsClarification) {
+            trace.outcome="clarification";trace.clarificationQuestion=overview.response;
+            recordIntentStage("clarification","clarification","В базе товаров не найдено соответствующих товарных позиций");
+          }
           trace.sourceCount=overview.sources.length;
           recordIntentStage("response","success",`Обзор ассортимента; источников: ${trace.sourceCount}`);
           return {...overview,mode:"scoped",responseTime:Date.now()-start};
