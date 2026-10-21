@@ -12,7 +12,9 @@ it("recognizes short task answers without confusing them with a new named produc
   expect(isTaskSelection("характеристики")).toBe(true);expect(isTaskSelection("мне нужны технические характеристики")).toBe(true);
   expect(isTaskSelection("общее описание")).toBe(true);expect(isTaskSelection("монтаж поршневого редуктора")).toBe(false);
   expect(productTaskTargets("монтаж")).toEqual(["installation"]);
-  expect(productTaskTargets("подбор")).toEqual(["catalog","installation"]);
+  expect(productTaskTargets("подбор")).toEqual(["catalog"]);
+  expect(productTaskTargets("эксплуатация")).toEqual(["installation"]);
+  expect(productTaskTargets("совместимость")).toEqual(["installation","catalog"]);
 });
 it("explains missing search results without claiming the product is absent or suggesting arbitrary files",()=>{
   const reply=clarifySearchFailure("аксиальные фитинги");

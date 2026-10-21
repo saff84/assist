@@ -8,8 +8,9 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { IntentRecommendationsPanel } from "@/components/IntentRecommendationsPanel";
 import { defaultQueryRouting, queryRoutingSchema, routeLabels, type QueryRoutingConfig, type RouteTarget } from "@shared/queryRouting";
+import { productSourcePolicy } from "@shared/productSourcePolicy";
 
-type Draft = {enabled:boolean; fallback:QueryRoutingConfig["fallback"]; rules:Array<Omit<QueryRoutingConfig["rules"][number], "terms"> & {termsText:string}>};
+type Draft = {enabled:boolean; fallback:QueryRoutingConfig["fallback"]; productAnswersFromCatalogOnly?:boolean; rules:Array<Omit<QueryRoutingConfig["rules"][number], "terms"> & {termsText:string}>};
 const toDraft = (config:QueryRoutingConfig):Draft => ({...config, rules:config.rules.map(rule => ({...rule, termsText:rule.terms.join("\n")}))});
 const toConfig = (draft:Draft):QueryRoutingConfig => ({...draft, rules:draft.rules.map(({termsText,...rule}) => ({...rule, terms:termsText.split(/[\n,;]+/).map(t=>t.trim()).filter(Boolean)}))});
 
@@ -48,7 +49,7 @@ export default function QueryRoutingPage() {
       <p><strong>Приоритет:</strong> правила проверяются сверху вниз. Побеждает первое включённое правило. Поставьте монтаж выше паспортов, чтобы «монтаж по паспорту» направлялся в монтаж.</p>
       <p>Правила проверяются первыми. Если совпадений нет, ИИ определяет тему и выбирает нужные базы. Если вопрос неоднозначен, задаёт конкретное уточнение. В режиме «О компании» без совпадения используется только база компании. Выключение автоматического переключения сохраняет ручной раздел или базу компании.</p>
       <p>После определения темы ИИ предлагает дополнения к правилам в блоке рекомендаций ниже. Администратор проверяет и применяет их вручную. Подробные стадии каждого обращения доступны в разделе «Статистика».</p>
-      <p>«Монтаж» использует проиндексированные MD паспортов и инструкции. «Паспорта» и «Сертификаты» подбирают PDF по названию для просмотра и скачивания. Для содержательного ответа по паспорту используйте «Монтаж».</p>
+      <p>«Товары / каталоги» используются для описания, характеристик, размеров и подбора. «Монтаж» использует MD паспортов и инструкции для монтажа, эксплуатации и совместимости. «Паспорта» и «Сертификаты» подбирают PDF для просмотра и скачивания. Для сравнения каталога с паспортом явно укажите оба источника в вопросе.</p>
       <p><strong>Поиск по артикулу:</strong> «мне нужен сертификат на 5905» или «мне нужен паспорт на 5905» сначала ищет точный артикул в проиндексированных товарах каталога, определяет товарную группу, затем ищет PDF по её названию. Поддерживаются числовые артикулы из 4–8 цифр. Если группа не назначена, используется название товара — это будет указано в ответе. При неоднозначности система попросит уточнение. Совпадение названия документа не подтверждает его применимость ко всем артикулам группы.</p>
       <p>Сначала проверьте правило на примере ниже, затем нажмите «Сохранить». Изменения действуют на новые запросы без пересоздания MD и перезапуска сервера.</p>
     </CardContent></Card>
@@ -58,6 +59,11 @@ export default function QueryRoutingPage() {
         <Button onClick={()=>{const config=validated(); if(config) save.mutate(config);}} disabled={!dirty || save.isPending}>{save.isPending ? "Сохранение…" : "Сохранить"}{dirty ? " *" : ""}</Button>
       </div>
       <label className="block space-y-2"><span>Если ни одно правило не совпало</span><select className="border rounded-md p-2 w-full bg-background" value={draft.fallback} onChange={e=>edit({...draft,fallback:e.target.value as Draft["fallback"]})}><option value="llm">Определять тему через ИИ и при необходимости уточнять вопрос</option><option value="company">Искать в базе «О компании»</option></select></label>
+      <Card><CardHeader><CardTitle>Источники ответов о товарах</CardTitle></CardHeader><CardContent className="space-y-3 text-sm">
+        <label className="flex items-center gap-3"><Switch checked={draft.productAnswersFromCatalogOnly!==false} onCheckedChange={value=>edit({...draft,productAnswersFromCatalogOnly:value})}/>Описание, характеристики, размеры и подбор — только из каталога</label>
+        <p>Эта политика применяется после правил и определения темы ИИ. Она ограничивает товарные вопросы каталогом, даже если старое правило добавляет «Монтаж». Если данных нет, бот уточняет запрос и не заменяет каталог паспортом. Монтаж, совместимость и явное сравнение источников сохраняют свои базы.</p>
+        <p>Точные модели различаются: DPV, DPV-C и DPV Н не заменяют друг друга. Короткое уточнение «характеристики» сохраняет выбранный товар. В старых настройках политика включена по умолчанию; пересоздавать правила и индексы не требуется.</p>
+      </CardContent></Card>
       {draft.rules.map((rule,index)=><Card key={rule.id}><CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><CardTitle>Правило {index+1}</CardTitle><div className="flex gap-2">
         <Button variant="outline" size="sm" disabled={index===0} onClick={()=>move(index,-1)} aria-label={`Поднять правило ${rule.name}`}>Выше</Button>
         <Button variant="outline" size="sm" disabled={index===draft.rules.length-1} onClick={()=>move(index,1)} aria-label={`Опустить правило ${rule.name}`}>Ниже</Button>
@@ -81,7 +87,9 @@ export default function QueryRoutingPage() {
         const config=validated(); if(!config) return;
         const result=await preview.mutateAsync({query,config}).catch(()=>undefined);
         if(result===undefined) return;
-        setPreviewText(result ? `Вопрос «${query}» → ${[result.target,...result.additionalTargets].map(target=>routeLabels[target]).join(" + ")}. Правило: «${result.ruleName}», совпадение: «${result.term}».` : draft.enabled && draft.fallback==="llm" ? "Правило не совпало. В реальном запросе тему определит ИИ; эта проверка ИИ не вызывает." : "Правило не совпало. Будет использован ручной раздел или база компании.");
+        const policy=productSourcePolicy(query,result?[result.target,...result.additionalTargets]:["catalog"],config);
+        const message=result ? `Вопрос «${query}» → ${(policy?.targets??[result.target,...result.additionalTargets]).map(target=>routeLabels[target]).join(" + ")}. Правило: «${result.ruleName}», совпадение: «${result.term}».` : draft.enabled && draft.fallback==="llm" ? "Правило не совпало. В реальном запросе тему определит ИИ; эта проверка ИИ не вызывает." : "Правило не совпало. Будет использован ручной раздел или база компании.";
+        setPreviewText(message+(policy?`\n${result?"Политика источников":"Для товарной темы действует политика"}: ${policy.reason}`:""));
       }}>{preview.isPending?"Проверка…":"Проверить"}</Button>
       <p aria-live="polite" className="text-sm whitespace-pre-wrap">{previewText}</p>
     </CardContent></Card>

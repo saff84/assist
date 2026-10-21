@@ -24,6 +24,7 @@ export const routingRuleSchema = z.object({
 export const queryRoutingSchema = z.object({
   enabled: z.boolean(),
   fallback: z.enum(["llm","company"]).default("llm"),
+  productAnswersFromCatalogOnly: z.boolean().optional(),
   rules: z.array(routingRuleSchema).max(50),
 }).refine(value => new Set(value.rules.map(rule => rule.id)).size === value.rules.length,
   {message: "Идентификаторы правил должны быть уникальными"});

@@ -1,4 +1,34 @@
 import { beforeEach, expect, it, vi } from "vitest";
+vi.mock("./catalogProductScope",()=>({resolveCatalogProductScope:vi.fn().mockResolvedValue({})}));
+import { resolveCatalogProductScope } from "./catalogProductScope";
+const dpvScope={name:"Автоматический балансировочный клапан DPV",model:"DPV",sections:[{documentId:10,sectionPath:"1.1"}]};
+it("honors an explicit source comparison instead of the passport download rule",async()=>{
+  const execute=vi.fn().mockResolvedValue(result);
+  await runIntentPipeline(input("сравни характеристики DPV в каталоге и паспорте"),undefined,execute);
+  expect(execute).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({allowedDocumentTypes:["catalog","installation","instruction"]}));
+});
+it("restricts old multi-base characteristic rules to the catalog and exact DPV section",async()=>{
+  vi.mocked(readQueryRouting).mockResolvedValueOnce({...defaultQueryRouting,rules:[{id:"old",name:"Характеристики",enabled:true,terms:["характеристик*"],target:"installation",additionalTargets:["catalog"]}]});
+  vi.mocked(resolveCatalogProductScope).mockResolvedValueOnce({scope:dpvScope});
+  const execute=vi.fn().mockResolvedValue(result);
+  await runIntentPipeline(input("характеристики DPV"),undefined,execute);
+  expect(execute).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({forceDocumentType:"catalog",allowedDocumentTypes:["catalog"],productScope:dpvScope}));
+  expect(saveIntentTrace).toHaveBeenCalledWith(expect.objectContaining({product:dpvScope,sourcePolicy:expect.stringContaining("только база товаров")}));
+});
+it("retains the exact selected model for a one-word characteristic follow-up",async()=>{
+  const previous=createIntentTrace("DPV","test","a");previous.product=dpvScope;previous.outcome="clarification";
+  vi.mocked(listIntentTraces).mockResolvedValueOnce([previous]);
+  const execute=vi.fn().mockResolvedValue(result);
+  await runIntentPipeline(input("характеристики"),undefined,execute);
+  expect(execute).toHaveBeenCalledWith(expect.objectContaining({query:expect.stringContaining("DPV")}),expect.objectContaining({allowedDocumentTypes:["catalog"],productScope:dpvScope}));
+  expect(classifyQueryIntent).not.toHaveBeenCalled();
+});
+it("asks for the precise model instead of answering from DPV-C or a passport",async()=>{
+  vi.mocked(resolveCatalogProductScope).mockResolvedValueOnce({clarification:"Уточните модель DPV"});
+  vi.mocked(classifyQueryIntent).mockResolvedValueOnce({...decision,targets:["catalog"],searchQuery:"характеристики DPV"});
+  const execute=vi.fn();const response=await runIntentPipeline(input("характеристики DPV"),undefined,execute);
+  expect(response.needsClarification).toBe(true);expect(execute).not.toHaveBeenCalled();
+});
 vi.mock("./catalogSubject",()=>({resolveCatalogSubject:vi.fn().mockResolvedValue(null)}));
 import { resolveCatalogSubject } from "./catalogSubject";
 it("answers characteristics of a uniquely resolved catalog line without redundant clarification",async()=>{

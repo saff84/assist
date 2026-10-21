@@ -8,6 +8,9 @@ import { intentStageLabels } from "../shared/intentProcessing";
 import { isProductOnlyQuery, productTaskQuestion, isTaskSelection, productTaskTargets } from "./productQuestion";
 import { assortmentFamily, catalogAssortmentResponse } from "./catalogAssortment";
 import { resolveCatalogSubject } from "./catalogSubject";
+import { resolveCatalogProductScope } from "./catalogProductScope";
+import { modelCodes } from "../shared/productScope";
+import { productSourcePolicy, isSourceComparison } from "../shared/productSourcePolicy";
 export async function runIntentPipeline(
   ragQuery:RAGQuery, options:RAGOptions|undefined, executeRAGQuery:(query:RAGQuery,options?:RAGOptions)=>Promise<RAGResponse>
 ):Promise<RAGResponse> {
@@ -20,6 +23,15 @@ export async function runIntentPipeline(
       if(!rule)trace.stages[trace.stages.length-1].detail=config.enabled?"Ни одно правило не совпало":"Автоматическая маршрутизация выключена";
       const history=trace.sessionHash?(await listIntentTraces()).filter(item=>item.sessionHash===trace.sessionHash).slice(0,3):[];
       const previous=history[0];
+      const bareTask=/^(?:(?:общее|общие|технические)\s+)?(?:характеристики|описание|параметры|размеры|подбор|монтаж|совместимость)[.!?]*$/i.test(ragQuery.query.trim());
+      const inheritedProduct=bareTask?previous?.product:undefined;
+      const previousModelQuery=previous?(modelCodes(previous.query).length===1?previous.query:previous.searchQuery??previous.query):"";
+      if(inheritedProduct) {
+        trace.product=inheritedProduct;
+        ragQuery={...ragQuery,query:`${ragQuery.query}\nВыбранный товар: ${inheritedProduct.name}`};
+      } else if(bareTask&&previous&&modelCodes(previousModelQuery).length===1) {
+        ragQuery={...ragQuery,query:`${ragQuery.query}\nПредыдущий товар: ${previousModelQuery}`};
+      }
       if(assortmentFamily(ragQuery.query) && (!options?.forceDocumentType || options.forceDocumentType==="catalog") && (!rule || rule.target==="catalog")) {
         trace.method=rule?"rule":"product";trace.targets=["catalog"];trace.searchQuery=ragQuery.query;
         const overview=await trackIntentStage("retrieval","Сбор групп и линеек из индексированных каталогов",()=>catalogAssortmentResponse(ragQuery.query));
@@ -43,8 +55,13 @@ export async function runIntentPipeline(
       }
       const taskFollowup=productAnswerFollowup??(previous?.outcome==="clarification"&&isTaskSelection(ragQuery.query)
         ? `${previous.searchQuery??previous.query}\nВопрос пользователя: ${ragQuery.query}`:null);
-      if(!productAnswerFollowup&&!options?.forceDocumentType && isProductOnlyQuery(ragQuery.query) && (!rule||["catalog","installation","instruction"].includes(rule.target))) {
-        const response=productTaskQuestion(ragQuery.query);
+      const pureModel=modelCodes(ragQuery.query).length===1&&ragQuery.query.trim().replace(/[«»"'\s‐‑–—-]/g,"").toUpperCase().replace(/Н/g,"H")===modelCodes(ragQuery.query)[0].replace(/-/g,"");
+      if(!productAnswerFollowup&&!options?.forceDocumentType && (isProductOnlyQuery(ragQuery.query)||pureModel) && (!rule||["catalog","installation","instruction"].includes(rule.target))) {
+        if(pureModel) {
+          const match=await trackIntentStage("sku","Определение точной модели в каталоге",()=>resolveCatalogProductScope(ragQuery.query));
+          if(match.scope)trace.product=match.scope;
+        }
+        const response=productTaskQuestion(trace.product?.name??ragQuery.query);
         trace.method=rule?"rule":"product";trace.targets=rule?[rule.target,...rule.additionalTargets]:["catalog","installation"];
         trace.outcome="clarification";trace.searchQuery=ragQuery.query;trace.clarificationQuestion=response;
         recordIntentStage("clarification","clarification","Название товара определено; уточняем цель вопроса");
@@ -52,7 +69,10 @@ export async function runIntentPipeline(
         return {response,sources:[],responseTime:Date.now()-start,tokensUsed:0};
       }
       let query=ragQuery;
-      if(rule) {
+      const compareSources=isSourceComparison(ragQuery.query);
+      if(compareSources) {
+        trace.method="product";trace.targets=["catalog","installation"];
+      } else if(rule) {
         trace.method="rule";trace.targets=[rule.target,...rule.additionalTargets];
         const ruleStage=trace.stages.find(stage=>stage.stage==="rules");
         if(ruleStage)ruleStage.detail=`Правило «${rule.ruleName}», совпадение «${rule.term}»`;
@@ -62,8 +82,9 @@ export async function runIntentPipeline(
         }
       } else if(options?.forceDocumentType) {
         trace.method="manual";trace.targets=[options.forceDocumentType];
-      } else if(productAnswerFollowup||resolvedSubject) {
+      } else if(productAnswerFollowup||resolvedSubject||inheritedProduct) {
         trace.method="product";trace.targets=productAnswerFollowup?productTaskTargets(previous!.query):["catalog"];
+        if(inheritedProduct)trace.targets=productTaskTargets(ragQuery.query);
       } else if(taskFollowup && previous && isProductOnlyQuery(previous.query)) {
         trace.method="product";trace.targets=productTaskTargets(ragQuery.query);
       } else if(config.enabled && config.fallback==="llm") {
@@ -90,8 +111,29 @@ export async function runIntentPipeline(
       } else {trace.targets=[options?.forceDocumentType??"company"];}
       if(taskFollowup)query={...query,query:taskFollowup};
       trace.searchQuery=query.query;
+      const policy=productSourcePolicy(query.query,trace.targets as any,config);
+      if(policy) {
+        trace.targets=policy.targets;trace.sourcePolicy=policy.reason;
+        recordIntentStage("rules","success",policy.reason);
+      }
+      if(trace.targets.length===1&&trace.targets[0]==="catalog") {
+        const match=await trackIntentStage("sku","Выбор точного раздела товара в каталоге",()=>resolveCatalogProductScope(query.query));
+        if(!match.scope&&!match.clarification&&inheritedProduct)match.scope=inheritedProduct;
+        if(match.clarification) {
+          trace.outcome="clarification";trace.clarificationQuestion=match.clarification;
+          recordIntentStage("clarification","clarification",match.clarification);
+          recordIntentStage("response","success","Запрошена точная модель; паспорта не использованы");
+          return {response:match.clarification,needsClarification:true,sources:[],tokensUsed:0,responseTime:Date.now()-start};
+        }
+        if(match.scope) {
+          trace.product=match.scope;
+          query={...query,query:`${query.query}\nТочный раздел каталога: ${match.scope.name}`};
+          trace.searchQuery=query.query;
+        }
+      }
       const targets=trace.targets as DocumentType[];
       options={...options,requireSynthesis:trace.method==="llm"||trace.method==="rule"||trace.method==="product"||options?.requireSynthesis,
+        productScope:targets.length===1&&targets[0]==="catalog"?trace.product:undefined,
         forceDocumentType:targets[0],allowedDocumentTypes:Array.from(new Set(targets.flatMap(target=>routeDocumentTypes(target as any))))};
       const response=await executeRAGQuery(query,options);
       if(response.needsClarification) {
@@ -99,6 +141,7 @@ export async function runIntentPipeline(
         recordIntentStage("clarification","clarification","Недостаточно результатов поиска; запрошено уточнение изделия");
       }
       trace.sourceCount=response.sources.length+(response.attachments?.length??0);
+      trace.sources=response.sources.map(({documentId,filename,sectionPath})=>({documentId,filename,sectionPath}));
       recordIntentStage("response","success",`Выдан ответ; источников: ${trace.sourceCount}`);
       return {...response,mode:targets[0]==="company"?"company":"scoped",responseTime:Date.now()-start};
     } catch(error) {

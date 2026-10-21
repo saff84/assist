@@ -5,6 +5,8 @@ import { trackIntentStage } from "./intentTrace";
 import { clarifySearchFailure, hasProductSubject } from "./productQuestion";
 import { runIntentPipeline } from "./intentPipeline";
 import { composeAnswerSystemPrompt } from "./rag/answerSourcePolicy";
+import { retrievalScopeWhere, scopedProductBundle } from "./rag/sourceScope";
+import { chunkInProductScope, hasSiblingModel } from "../shared/productScope";
 import { eq, desc, sql } from "drizzle-orm";
 
 import {
@@ -260,7 +262,7 @@ function applyMmr(
 }
 
 async function fetchRawChunks(
-  config: RAGConfig
+  config: RAGConfig, options?:RAGOptions
 ): Promise<{
   chunks: Array<{
     id: number;
@@ -304,12 +306,13 @@ async function fetchRawChunks(
     })
     .from(documentChunks)
     .innerJoin(documents, eq(documentChunks.documentId, documents.id))
-    .where(eq(documents.status, "indexed"))
+    .where(retrievalScopeWhere(options))
     // Prefer newer chunks; avoid arbitrary slice of unordered corpus
     .orderBy(desc(documentChunks.id))
     .limit(Math.max(config.retrieval.maxInitialChunks, 500));
 
-  const faqRows = await db
+  const includeFaq=!options?.productScope&&(!options?.allowedDocumentTypes||options.allowedDocumentTypes.includes("warranty_faq"))&&(!options?.forceDocumentType||options.forceDocumentType==="warranty_faq"||options.allowedDocumentTypes?.includes("warranty_faq"));
+  const faqRows = includeFaq?await db
     .select({
       id: faqEntries.id,
       title: faqEntries.title,
@@ -320,7 +323,7 @@ async function fetchRawChunks(
       tags: faqEntries.tags,
     })
     .from(faqEntries)
-    .limit(5000);
+    .limit(5000):[];
 
   const meta = new Map<number, DocumentMeta>();
 
@@ -875,10 +878,11 @@ async function retrieveAndScoreChunks(
       hasCatalogIntent(query) || options?.forceDocumentType === "catalog",
   };
 
-  const { chunks: allRawChunks, documentMeta } = await fetchRawChunks(config);
-  const rawChunks = options?.allowedDocumentTypes
+  const { chunks: allRawChunks, documentMeta } = await fetchRawChunks(config,options);
+  const typedChunks = options?.allowedDocumentTypes
     ? allRawChunks.filter(chunk => options.allowedDocumentTypes!.includes(chunk.docType))
     : allRawChunks;
+  const rawChunks=options?.productScope?typedChunks.filter(chunk=>chunkInProductScope(chunk,options.productScope!)):typedChunks;
   if (!rawChunks.length) {
     return {
       chunks: [],
@@ -996,7 +1000,7 @@ async function retrieveAndScoreChunks(
       options?.topK ?? config.retrieval.mmr.candidatePoolSize
     );
 
-  const mmrSelected = applyMmr(
+  const mmrSelected = options?.productScope?scopedProductBundle(candidateChunks,query,config.retrieval.answerThreshold):applyMmr(
     sorted,
     config.retrieval.mmr.lambda,
     config.retrieval.mmr.resultCount
@@ -1036,6 +1040,7 @@ function enforceContextCaps(
   options?: {
     queryTokens?: string[];
     installation?: boolean;
+    preserveOrder?: boolean;
   }
 ): { limited: ScoredChunk[]; selectedDocs: Map<number, ScoredChunk[]> } {
   const caps = config.retrieval.contextCaps;
@@ -1054,7 +1059,7 @@ function enforceContextCaps(
     grouped.get(chunk.documentId)!.push(chunk);
   });
 
-  grouped.forEach((list) =>
+  if(!options?.preserveOrder)grouped.forEach((list) =>
     list.sort((a, b) => b.relevance - a.relevance)
   );
 
@@ -3575,16 +3580,18 @@ async function executeRAGQuery(
 
   // Soft variant: prefer via boosts/sort in retrieveRelevantChunks; do not hard-filter
   let baseChunks = typeFiltered.length > 0 ? typeFiltered : filtered;
-  const augmentedChunks = await expandCatalogChunksWithNeighbors(
+  const expandedChunks = options?.productScope?baseChunks:await expandCatalogChunksWithNeighbors(
     baseChunks,
     retrieval.documentMeta
   );
+  const augmentedChunks=options?.productScope?expandedChunks.filter(chunk=>chunkInProductScope(chunk,options.productScope!)):expandedChunks;
 
   const { limited, selectedDocs } = enforceContextCaps(
     augmentedChunks,
     retrieval.documentMeta,
     config,
     {
+      preserveOrder:Boolean(options?.productScope),
       queryTokens: tokenize(
         ragQuery.query,
         createStopwordSet(config.retrieval.stopwords.extra)
@@ -3616,7 +3623,7 @@ async function executeRAGQuery(
     );
   }
 
-  const rerankConfig = options?.disableReranker
+  const rerankConfig = options?.disableReranker||options?.productScope
     ? {
         ...config.retrieval,
         reranker: {
@@ -3730,7 +3737,7 @@ async function executeRAGQuery(
         // Expand them only for an explicit catalog/table request; otherwise use
         // only the data actually attached to this retrieved chunk.
         const directTable = metadata.tableJson || (chunk as any)?.tableJson;
-        const tableData = intents.catalog && !intents.installation && queryWantsTables(ragQuery.query)
+        const tableData = !options?.productScope && intents.catalog && !intents.installation && queryWantsTables(ragQuery.query)
           ? await resolveTableData(chunk, sectionPath)
           : Array.isArray(directTable) ? directTable : null;
         if (tableData && Array.isArray(tableData) && tableData.length > 0) {
@@ -4048,9 +4055,19 @@ ${context.context}
     maxTokens: llmMaxTokens,
   });
 
-  let messageContent =
-    llmResponse.choices[0]?.message?.content ??
-    "В документах нет информации о вашем вопросе.";
+  const answerContent=llmResponse.choices[0]?.message?.content;
+  let messageContent=typeof answerContent==="string"?answerContent:"В документах нет информации о вашем вопросе.";
+  const expectedModel=options?.productScope?.model;
+  if(expectedModel&&hasSiblingModel(String(messageContent),expectedModel)) {
+    const retry=await invokeLLM({model:config.llm.model,messages:[
+      {role:"system",content:systemPrompt+`\nОтвечай только про точную модель ${expectedModel}. Параметры других исполнений этой серии использовать запрещено.`},
+      {role:"user",content:userMessage},
+    ],temperature:0,maxTokens:llmMaxTokens});
+    const corrected=retry.choices[0]?.message?.content;
+    if(typeof corrected!=="string"||hasSiblingModel(corrected,expectedModel))
+      return replyMaterialNotFound(`Не удалось сформировать ответ без смешения моделей. Выбран ${expectedModel}; уточните нужную характеристику. Данные других моделей и паспортов не использованы.`,start);
+    messageContent=corrected;
+  }
 
   const finishReason = String(
     (llmResponse.choices[0] as { finish_reason?: string } | undefined)
@@ -4082,7 +4099,7 @@ ${context.context}
   // When user specifies an article (4–6 digits) or a single attribute, don't append full tables.
   const explicitArticle = hasExplicitArticleInQuery(ragQuery.query);
   const allowAutoTables =
-    wantsTables && !requestedCatalogAttribute && !explicitArticle;
+    wantsTables && !requestedCatalogAttribute && !explicitArticle && !options?.requireSynthesis;
   if (allowAutoTables) {
     messageContent = ensureTablesInResponse(messageContent, usedSources, {
       // For mounting answers the model usually already rendered tables;

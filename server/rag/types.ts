@@ -80,6 +80,7 @@ export interface RAGConfig {
 }
 
 export interface RAGOptions {
+  productScope?: import("../../shared/productScope").ProductScope;
   topK?: number;
   includeDiagnostics?: boolean;
   forceDocumentType?: DocumentType;

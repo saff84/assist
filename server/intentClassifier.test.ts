@@ -12,6 +12,10 @@ it("preserves user numbers when a rewritten query loses them",async()=>{
   respond({...decision,searchQuery:"размеры трубы"});
   expect((await classifyQueryIntent("размеры 5905")).searchQuery).toBe("размеры 5905");
 });
+it("preserves the exact model when classification rewrites DPV as DPV-C",async()=>{
+  respond({...decision,searchQuery:"характеристики DPV-C"});
+  expect((await classifyQueryIntent("характеристики DPV")).searchQuery).toBe("характеристики DPV");
+});
 it("rejects invented databases and malformed output",async()=>{
   respond({...decision,targets:["internet"]});
   await expect(classifyQueryIntent("размеры")).rejects.toThrow();

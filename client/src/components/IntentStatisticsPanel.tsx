@@ -31,6 +31,9 @@ export function IntentStatisticsPanel() {
     {rows.slice(0,shown).map(item=><details key={item.id} className="border rounded-lg p-3"><summary className="cursor-pointer break-words">{item.query}<span className="block text-xs text-muted-foreground mt-1">{new Date(item.createdAt).toLocaleString("ru-RU")} · {item.source} · {methods[item.method]} · {item.durationMs} мс · {item.outcome==="clarification"?"Уточнение":item.outcome==="error"?"Ошибка":"Ответ"}</span></summary>
       <p className="text-sm my-3">Базы: {item.targets.map(target=>routeLabels[target as keyof typeof routeLabels]??target).join(" + ")||"не определены"}. Источников в выдаче: {item.sourceCount}.</p>
       {item.searchQuery && item.searchQuery!==item.query && <p className="text-sm mb-3 whitespace-pre-wrap">Запрос для поиска с учётом контекста: {item.searchQuery}</p>}
+      {item.product&&<p className="text-sm mb-3">Выбранный товар: {item.product.name}. Модель: {item.product.model??"не указана"}. Разделы: {item.product.sections.map(section=>`${section.documentId}: ${section.sectionPath}`).join(", ")}.</p>}
+      {item.sourcePolicy&&<p className="text-sm mb-3">Политика источников: {item.sourcePolicy}</p>}
+      {!!item.sources?.length&&<p className="text-sm mb-3">Использованы: {item.sources.map(source=>`${source.filename}${source.sectionPath?` · ${source.sectionPath}`:""}`).join("; ")}</p>}
       {item.classification && <p className="text-sm mb-3">Решение классификатора: {item.classification.reason}. Уверенность модели: {Math.round(item.classification.confidence*100)}% (оценка модели).</p>}
       <ol className="space-y-2 text-sm">{item.stages.map((stage,index)=><li key={index} className={stage.status==="error"?"text-destructive":""}><strong>{intentStageLabels[stage.stage]}</strong>: {statuses[stage.status]} · {stage.durationMs} мс<br/>{stage.detail}</li>)}</ol>
     </details>)}

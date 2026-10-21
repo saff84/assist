@@ -2,7 +2,8 @@ const product=/труб|фитинг|редуктор|клапан|коллек�
 const task=/монтаж|монтир|установ|подключ|подбор|подобра|подобрать|выбра|выбор|характерист|параметр|описани|расска|обзор|что такое|для чего|зачем|как |како|каки|сколько|чем |можно|нужно ли|совмест|подойдет|подойдёт|размер|диаметр|давлен|температур|расход|цен[аыу]|стоим|паспорт|сертифик|гарант|неисправ|теч[ьеи]|слома|замен|опрессов|радиус|инструкц/i;
 export const hasProductSubject=(query:string)=>product.test(query);
 export function productTaskTargets(query:string):Array<"catalog"|"installation"> {
-  return /монтаж|установ|подключ/i.test(query)?["installation"]:["catalog","installation"];
+  if(/совмест/i.test(query))return ["installation","catalog"];
+  return /монтаж|установ|подключ|эксплуатац/i.test(query)?["installation"]:["catalog"];
 }
 export function isProductOnlyQuery(query:string):boolean {
   const value=query.trim().replace(/ё/g,"е");
