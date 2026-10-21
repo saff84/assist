@@ -4,6 +4,29 @@ import { getDb } from "./db";
 import { MySqlDialect } from "drizzle-orm/mysql-core";
 import { assortmentFamily, selectAssortment, catalogAssortmentResponse } from "./catalogAssortment";
 const fixtures=(names:string[])=>names.map((name,documentId)=>({name,documentId,filename:"catalog.md"}));
+it("tolerates a typo in reducing qualifiers without broadening to other valves",()=>{
+  const entries=fixtures(["Клапан редукционный мембранный DPRV-L","Клапан редукционный поршневой PRV-L","Клапан балансировочный"]);
+  const query="какие есть редукционныые клапаны";
+  expect(selectAssortment(entries,assortmentFamily(query)!,query).map(entry=>entry.name)).toHaveLength(2);
+});
+it("keeps model codes exact when allowing qualifier typos",()=>{
+  const query="какие есть редукционные клапаны PRV-L";
+  expect(selectAssortment(fixtures(["Клапан редукционный PRV-L","Клапан редукционный PRV-N"]),assortmentFamily(query)!,query).map(entry=>entry.name)).toEqual(["Клапан редукционный PRV-L"]);
+});
+it("lists all separately indexed pipe types before SKU variants and asks which to describe",async()=>{
+  const results=[[],[],[],[
+    {documentId:1,filename:"труба_теплый_пол.md",name:"Труба SANEXT Теплый пол"},
+    {documentId:2,filename:"труба_универсальная.md",name:"Труба SANEXT Универсальная"},
+    {documentId:3,filename:"краны.md",name:"Кран для трубы"},
+  ]];let index=0;
+  vi.mocked(getDb).mockResolvedValue({select:()=>{
+    const rows=results[index++];const chain:any={from:()=>chain,innerJoin:()=>chain,leftJoin:()=>chain,where:async()=>rows};return chain;
+  }} as any);
+  const response=await catalogAssortmentResponse("какая есть труба");
+  expect(response?.response).toContain("Труба SANEXT Теплый пол");expect(response?.response).toContain("Труба SANEXT Универсальная");
+  expect(response?.response).not.toContain("Кран");expect(response?.response).toContain("О каком виде рассказать подробнее");
+  expect(response?.sources).toHaveLength(2);
+});
 it("lists all valve products for the broad question, preserving distinct models",()=>{
   const names=["Клапан обратный SANEXT","Клапан редукционный PRV-L","Клапан балансировочный DPV","Клапан запорный LV2"];
   expect(selectAssortment(fixtures(names),assortmentFamily("какие есть клапана")!,"какие есть клапана").map(item=>item.name)).toHaveLength(4);
@@ -30,6 +53,7 @@ it("uses product records and SKU tables, never arbitrary headings, and stays in 
     [],
     [{documentId:2,filename:"manual.md",rows:[{Артикул:"5905"}],sectionName:"Клапан обратный",chunkIndex:7},
      {documentId:3,filename:"technical.md",rows:[{Значение:10}],sectionName:"Клапан посторонний"}],
+    [],
   ];
   const queries:any[]=[];
   vi.mocked(getDb).mockResolvedValue({select:()=>{
@@ -51,6 +75,32 @@ it("does not broaden an empty assortment lookup to other knowledge bases",async(
   }} as any);
   const response=await catalogAssortmentResponse("какие есть редукционные клапаны");
   expect(response?.needsClarification).toBe(true);expect(response?.sources).toEqual([]);
+});
+it.each(["какая есть труба","какой есть фитинг","какое есть оборудование — фитинги"])("recognizes singular assortment questions: %s",query=>expect(assortmentFamily(query)).not.toBeNull());
+it("answers the singular pipe question with actual pipe lines",()=>{
+  const query="какая есть труба";
+  expect(selectAssortment(fixtures(["Труба SANEXT Теплый пол","Труба SANEXT Универсальная","Кран для трубы"]),assortmentFamily(query)!,query)).toHaveLength(2);
+});
+it("lists both indexed fitting lines instead of accessories mentioning fittings",()=>{
+  const entries=[
+    {documentId:1,filename:"фитинги_lite.md",name:"фитинги_lite",kind:"catalog" as const},
+    {documentId:2,filename:"аксиальные_фитинги.md",name:"аксиальные_фитинги",kind:"catalog" as const},
+    ...fixtures(["Кольцо компрессионное для фитинга","Фитинг подключения медной трубки","Ключ для аксиальных фитингов"]),
+  ];
+  expect(selectAssortment(entries,assortmentFamily("какие есть фитинги")!,"какие есть фитинги").map(entry=>entry.name)).toEqual(["аксиальные фитинги","фитинги lite"]);
+  expect(selectAssortment(entries,assortmentFamily("какие есть аксиальные фитинги")!,"какие есть аксиальные фитинги").map(entry=>entry.name)).toEqual(["аксиальные фитинги"]);
+});
+it("loads fitting line names from indexed catalogs even if SKU names omit the word fitting",async()=>{
+  const results=[[],[{documentId:1,filename:"фитинги_lite.md",name:"Муфта"}],[],[
+    {documentId:1,filename:"фитинги_lite.md",name:null},
+    {documentId:2,filename:"аксиальные_фитинги.md",name:"Аксиальные фитинги"},
+  ]];let index=0;
+  vi.mocked(getDb).mockResolvedValue({select:()=>{
+    const rows=results[index++];const chain:any={from:()=>chain,innerJoin:()=>chain,leftJoin:()=>chain,where:async()=>rows};return chain;
+  }} as any);
+  const response=await catalogAssortmentResponse("какие есть фитинги");
+  expect(response?.response).toContain("фитинги lite");expect(response?.response).toContain("Аксиальные фитинги");
+  expect(response?.sources.map(source=>source.documentId).sort()).toEqual([1,2]);
 });
 it.each([
   ["какие фитинги есть у SANEXT","Фитинги PPSU Lite"],
