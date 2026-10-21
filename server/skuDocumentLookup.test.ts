@@ -61,3 +61,49 @@ it("prefers an explicit SKU document over approximate group matches",async()=>{
   expect(result).toMatchObject({status:"resolved",matchKind:"sku",group:"Трубопроводная арматура",documents:[certificate]});
   expect(dependencies.documents).not.toHaveBeenCalled();
 });
+it("finds the common PPSU Lite certificate for article 44293 by ascending from plugs",async()=>{
+  const lite=document("СГР на фитинги PPSU Lite",10),plain=document("ГОСТ Р на фитинги SANEXT PPSU",11);
+  const dependencies={catalog:vi.fn().mockResolvedValue([{groupName:"Заглушки",productName:null,catalogId:1,hierarchy:["Заглушки","Фитинги PPSU Lite","Фитинги lite"]}]),documents:vi.fn().mockResolvedValue([plain,lite])};
+  expect(await lookupDocumentsForSku("44293","certificate",stopwords,dependencies)).toMatchObject({status:"resolved",group:"Заглушки",matchKind:"hierarchy",matchedCategory:"Фитинги PPSU Lite",documents:[lite]});
+  expect(dependencies.documents).toHaveBeenCalledWith("Заглушки","certificate",stopwords,30);
+  expect(dependencies.documents).toHaveBeenCalledWith("Фитинги PPSU Lite","certificate",stopwords,30);
+});
+it("keeps Lite evidence from the catalog filename even when parent headings are generic",async()=>{
+  const lite=document("СГР на фитинги PPSU Lite",10),plain=document("ГОСТ Р на фитинги SANEXT PPSU",11);
+  const dependencies={catalog:vi.fn().mockResolvedValue([{groupName:"Заглушки",productName:null,hierarchy:["Заглушки","Фитинги","Фитинги lite"]}]),documents:vi.fn().mockResolvedValue([plain,lite])};
+  expect(await lookupDocumentsForSku("44293","certificate",stopwords,dependencies)).toMatchObject({documents:[lite]});
+});
+it("uses administrator-confirmed applicability before an exact SKU title or fuzzy category search",async()=>{
+  const linked=document("Общий сертификат PPSU Lite",20);
+  const dependencies={catalog:vi.fn().mockResolvedValue([{groupName:"Заглушки",productName:null}]),documents:vi.fn(),exactDocuments:vi.fn(),linkedDocuments:vi.fn().mockResolvedValue([linked])};
+  expect(await lookupDocumentsForSku("44293","certificate",stopwords,dependencies)).toMatchObject({matchKind:"binding",documents:[linked]});
+  expect(dependencies.exactDocuments).not.toHaveBeenCalled();expect(dependencies.documents).not.toHaveBeenCalled();
+});
+it("does not use a Lite certificate for a plain PPSU catalog",async()=>{
+  const dependencies={catalog:vi.fn().mockResolvedValue([{groupName:"Заглушки",productName:null,hierarchy:["Заглушки","Фитинги PPSU"]}]),documents:vi.fn().mockResolvedValue([document("СГР на фитинги PPSU Lite")])};
+  expect(await lookupDocumentsForSku("44293","certificate",stopwords,dependencies)).toMatchObject({documents:[]});
+});
+it("combines incomplete product and chunk ancestry from the same catalog without inventing ambiguity",async()=>{
+  const lite=document("СГР на фитинги PPSU Lite",10);
+  const dependencies={catalog:vi.fn().mockResolvedValue([
+    {catalogId:1,groupName:"Заглушки",productName:null,hierarchy:["Фитинги lite"]},
+    {catalogId:1,groupName:"Заглушки",productName:null,hierarchy:["Заглушки","Фитинги PPSU Lite","Фитинги lite"]},
+  ]),documents:vi.fn().mockResolvedValue([lite])};
+  expect(await lookupDocumentsForSku("44293","certificate",stopwords,dependencies)).toMatchObject({status:"resolved",documents:[lite]});
+});
+it("asks for clarification when the same article is found in distinct product lines",async()=>{
+  const dependencies={catalog:vi.fn().mockResolvedValue([
+    {catalogId:1,groupName:"Заглушки",productName:null,hierarchy:["Заглушки","Фитинги PPSU Lite"]},
+    {catalogId:2,groupName:"Заглушки",productName:null,hierarchy:["Заглушки","Фитинги PPSU"]},
+  ]),documents:vi.fn()};
+  expect(await lookupDocumentsForSku("44293","certificate",stopwords,dependencies)).toMatchObject({status:"ambiguous"});
+  expect(dependencies.documents).not.toHaveBeenCalled();
+});
+it("prefers the leaf section over a manually assigned ancestor within the same catalog",async()=>{
+  const hierarchy=["Заглушки","Фитинги PPSU Lite"];
+  const dependencies={catalog:vi.fn().mockResolvedValue([
+    {catalogId:1,groupName:"Фитинги PPSU Lite",productName:null,hierarchy},
+    {catalogId:1,groupName:"Заглушки",productName:null,hierarchy},
+  ]),documents:vi.fn().mockResolvedValue([document("СГР на фитинги PPSU Lite")])};
+  expect(await lookupDocumentsForSku("44293","certificate",stopwords,dependencies)).toMatchObject({status:"resolved",group:"Заглушки",matchKind:"hierarchy"});
+});

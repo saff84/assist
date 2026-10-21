@@ -19,6 +19,7 @@ import LlmSettingsPage from "./pages/LlmSettingsPage";
 import CompanyPage from "./pages/CompanyPage";
 import KnowledgeSyncPage from "./pages/KnowledgeSyncPage";
 import QueryRoutingPage from "./pages/QueryRoutingPage";
+import DocumentApplicabilityPage from "./pages/DocumentApplicabilityPage";
 import LoginPage from "./pages/LoginPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import WidgetPage from "./pages/WidgetPage";
@@ -102,6 +103,7 @@ function Router() {
       <Route path="/query-routing">
         <AuthGate><DashboardLayout><QueryRoutingPage /></DashboardLayout></AuthGate>
       </Route>
+      <Route path="/document-links"><AuthGate><DashboardLayout><DocumentApplicabilityPage /></DashboardLayout></AuthGate></Route>
       <Route path="/test-panel">
         <AuthGate>
           <DashboardLayout>

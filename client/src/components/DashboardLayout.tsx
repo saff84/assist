@@ -34,6 +34,7 @@ const menuItems = [
   { icon: Settings, label: "Prompt Editor", path: "/prompt-editor", roles: ["admin"] as const },
   { icon: Bot, label: "LLM", path: "/llm-settings", roles: ["admin"] as const },
   { icon: Settings, label: "Маршрутизация вопросов", path: "/query-routing", roles: ["admin"] as const },
+  { icon: FileText, label: "Связи документов", path: "/document-links", roles: ["admin"] as const },
   { icon: MessageSquare, label: "Test Panel", path: "/test-panel", roles: ["admin", "editor"] as const },
   { icon: Code2, label: "Widget", path: "/widget", roles: ["admin"] as const },
   { icon: BarChart3, label: "Statistics", path: "/statistics", roles: ["admin", "editor"] as const },

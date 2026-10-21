@@ -23,8 +23,10 @@ import {
 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useState } from "react";
+import { useAuth } from "@/_core/hooks/useAuth";
 
 export default function DocumentDetailsPage() {
+  const {user}=useAuth();
   const [, params] = useRoute("/documents/:id");
   const documentId = params ? parseInt(params.id) : null;
   const [, setLocation] = useLocation();
@@ -97,6 +99,7 @@ export default function DocumentDetailsPage() {
             {document.status}
           </Badge>
           <Badge variant="outline">{document.docType}</Badge>
+          {user?.role==="admin"&&(document.docType==="passport"||document.docType==="certificate")&&<Button variant="outline" size="sm" onClick={()=>setLocation(`/document-links?documentId=${document.id}`)}>Связи с товарами</Button>}
           <Badge variant="outline">{document.processingType}</Badge>
           {document.status === "indexed" && (
             <>

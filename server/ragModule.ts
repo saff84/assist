@@ -3453,6 +3453,8 @@ async function executeRAGQuery(
         ? `Артикул **${result.sku}** → ${result.groupKind==="group"?"товарная группа":"товар (группа не назначена)"}: **${result.group}**.\n\n`
         : `Артикул **${result.sku}**.\n\n`;
       if(result.matchKind==="sku")resolutionPrefix+="Точный артикул указан в названии документа.\n\n";
+      if(result.matchKind==="binding")resolutionPrefix+="Документ связан с этим товаром или категорией в админке.\n\n";
+      if(result.matchKind==="hierarchy")resolutionPrefix+=`Общий документ подобран по категории/линейке **${result.matchedCategory}**. Совпадение по названию, без подтверждённой связи применимости.\n\n`;
       hits=result.documents;
       console.log(`[RAG] Document SKU lookup: sku=${result.sku}, group=${result.group}, type=${forcedDocType}, hits=${hits.length}`);
       if(!hits.length) {
