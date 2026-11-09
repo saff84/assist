@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { ChatGreetingSettingsPanel } from "@/components/ChatGreetingSettingsPanel";
+import { WidgetAppearanceSettingsPanel } from "@/components/WidgetAppearanceSettingsPanel";
+import { WidgetConsentSettingsPanel } from "@/components/WidgetConsentSettingsPanel";
 import { Code2, Copy, ExternalLink, Globe, Loader2, MessageSquare } from "lucide-react";
 
 export default function WidgetPage() {
@@ -88,6 +90,8 @@ export default function WidgetPage() {
           </Card>
         </div>
 
+        <WidgetAppearanceSettingsPanel />
+        <WidgetConsentSettingsPanel />
         <ChatGreetingSettingsPanel />
         <Card>
           <CardHeader>
@@ -144,8 +148,6 @@ export default function WidgetPage() {
   s.onload = function () {
     window.SanextChatWidget && window.SanextChatWidget.init({
       apiBaseUrl: API,
-      title: 'SANEXT Assistant',
-      subtitle: 'Продукция, монтаж и документы SANEXT',
       position: 'bottom-right'
     });
   };

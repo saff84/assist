@@ -54,7 +54,8 @@ export function buildContext(
         return;
       }
       const permittedChars = Math.max(availableTokens * TOKEN_CHAR_RATIO, 1);
-      truncatedContent = truncateContent(truncatedContent, permittedChars);
+      // truncateContent adds an ellipsis; reserve its character inside the budget.
+      truncatedContent = truncateContent(truncatedContent, permittedChars - 1);
       blockTokens =
         estimateTokens(truncatedContent) + headerTokenCost;
       if (totalTokens + blockTokens > caps.maxTokens) {

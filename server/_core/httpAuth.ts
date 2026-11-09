@@ -18,13 +18,13 @@ export async function requireKnowledgeAuth(
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
-    const userId = await verifyAuthToken(rawCookie);
-    if (!userId) {
+    const session = await verifyAuthToken(rawCookie);
+    if (!session) {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
-    const user = await getUserById(userId);
-    if (!user || !canManageKnowledgeBase(user.role)) {
+    const user = await getUserById(session.userId);
+    if (!user || user.sessionVersion !== session.sessionVersion || user.mustChangePassword || !canManageKnowledgeBase(user.role)) {
       res.status(403).json({ error: "Forbidden" });
       return;
     }

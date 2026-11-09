@@ -1,94 +1,54 @@
 import type { Express, Request, Response } from "express";
 import multer from "multer";
-import * as path from "path";
-import * as fs from "fs";
+import path from "path";
+import fs from "fs/promises";
 import crypto from "crypto";
+import { requireKnowledgeAuth } from "./_core/httpAuth";
+import { rasterImageType } from "./_core/rasterImage";
 
-function ensureFaqImagesDir(): string {
-  const uploadsDir = path.join(process.cwd(), "uploads", "faq-images");
-  if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-    console.log(`[FAQ Images] Created uploads directory: ${uploadsDir}`);
-  }
-  return uploadsDir;
-}
-
-function safeKey(raw: string): string {
-  const key = raw.replace(/[/\\]+/g, "_").replace(/\.\.+/g, ".");
-  return key;
-}
-
-const upload = multer({
-  dest: "/tmp/uploads",
-  limits: {
-    fileSize: 15 * 1024 * 1024, // 15MB
-  },
-});
+const MAX_IMAGE_SIZE = 15 * 1024 * 1024;
+const imagesDir = path.resolve("uploads", "faq-images");
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_IMAGE_SIZE, files: 1, fields: 0, parts: 2 } });
 
 export function registerFaqImageRoutes(app: Express) {
-  app.post(
-    "/api/faq-images/upload",
-    upload.single("file"),
-    async (req: Request, res: Response) => {
+  app.post("/api/faq-images/upload", requireKnowledgeAuth, (req, res) => {
+    upload.single("file")(req, res, async error => {
+      if (error) { res.status(400).json({ error: "Допустимо одно изображение до 15 МБ" }); return; }
       try {
-        const file = (req as any).file as
-          | {
-              path: string;
-              originalname: string;
-              mimetype: string;
-              size: number;
-            }
-          | undefined;
-
-        if (!file) {
-          return res.status(400).json({ error: "No file uploaded" });
-        }
-
-        const uploadsDir = ensureFaqImagesDir();
-        const ext = path.extname(file.originalname || "").slice(0, 10) || "";
-        const random = crypto.randomBytes(8).toString("hex");
-        const key = safeKey(`${Date.now()}_${random}${ext}`);
-        const permanentPath = path.resolve(uploadsDir, key);
-
-        fs.renameSync(file.path, permanentPath);
-
-        const url = `/api/faq-images/${encodeURIComponent(key)}`;
-        return res.json({
-          key,
-          filename: file.originalname || key,
-          mimeType: file.mimetype || "application/octet-stream",
-          url,
-        });
+        const file = req.file;
+        const type = file && rasterImageType(file.buffer);
+        if (!file || !type) { res.status(400).json({ error: "Допустимы PNG, JPEG, WebP или GIF" }); return; }
+        await fs.mkdir(imagesDir, { recursive: true });
+        const key = `${Date.now()}_${crypto.randomBytes(16).toString("hex")}${type.extension}`;
+        await fs.writeFile(path.join(imagesDir, key), file.buffer, { flag: "wx", mode: 0o600 });
+        res.json({ key, filename: file.originalname, mimeType: type.mimeType, url: `/api/faq-images/${key}` });
       } catch (error) {
-        console.error("[FAQ Images] Upload error:", error);
-        return res.status(500).json({ error: "Failed to upload image" });
+        console.error("[FAQ Images] Upload failed", error);
+        res.status(500).json({ error: "Не удалось сохранить изображение" });
       }
-    }
-  );
+    });
+  });
 
   app.get("/api/faq-images/:key", async (req: Request, res: Response) => {
+    const key = req.params.key;
+    if (!/^[a-zA-Z0-9_.-]+$/.test(key) || key.includes("..")) { res.status(400).end(); return; }
+    const filePath = path.resolve(imagesDir, key);
+    if (path.dirname(filePath) !== imagesDir) { res.status(400).end(); return; }
     try {
-      const rawKey = req.params.key;
-      const decoded = safeKey(decodeURIComponent(rawKey || ""));
-      if (!decoded || decoded.includes("..")) {
-        return res.status(400).json({ error: "Invalid key" });
-      }
-
-      const uploadsDir = ensureFaqImagesDir();
-      const absolute = path.resolve(uploadsDir, decoded);
-      if (!absolute.startsWith(path.resolve(uploadsDir))) {
-        return res.status(400).json({ error: "Invalid key" });
-      }
-
-      if (!fs.existsSync(absolute)) {
-        return res.status(404).json({ error: "Not found" });
-      }
-
-      return res.sendFile(absolute);
-    } catch (error) {
-      console.error("[FAQ Images] Serve error:", error);
-      return res.status(500).json({ error: "Failed to serve image" });
-    }
+      const file = await fs.open(filePath, "r");
+      let type: ReturnType<typeof rasterImageType> = null;
+      try {
+        const stats = await file.stat();
+        if (!stats.isFile() || stats.size > MAX_IMAGE_SIZE) { res.status(404).end(); return; }
+        const header = Buffer.alloc(12);
+        const { bytesRead } = await file.read(header, 0, 12, 0);
+        type = rasterImageType(header.subarray(0, bytesRead));
+      } finally { await file.close(); }
+      if (!type) { res.status(404).end(); return; }
+      res.setHeader("Content-Type", type.mimeType);
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+      res.sendFile(filePath);
+    } catch { res.status(404).end(); }
   });
 }
-

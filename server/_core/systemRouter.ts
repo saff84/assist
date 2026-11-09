@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { notifyOwner } from "./notification";
-import { adminProcedure, publicProcedure, router } from "./trpc";
+import { adminProcedure, knowledgeProcedure, publicProcedure, router } from "./trpc";
 import { getRagConfig } from "../rag/config";
 
 export const systemRouter = router({
@@ -14,7 +14,7 @@ export const systemRouter = router({
       ok: true,
     })),
 
-  getModelStatus: publicProcedure.input(z.void().nullish()).query(async () => {
+  getModelStatus: knowledgeProcedure.input(z.void().nullish()).query(async () => {
     const ragConfig = getRagConfig();
     const ollamaUrlRaw =
       process.env.OLLAMA_URL ||

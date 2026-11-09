@@ -1006,7 +1006,7 @@ export async function getProductDetails(documentId: number, productSku: string) 
     .orderBy(asc(documentChunks.chunkIndex));
 
   return {
-    product,
+    product: { ...product, sectionPath: productSectionPath },
     chunks: productChunks.map((chunk) => ({
       id: chunk.id,
       chunkIndex: chunk.chunkIndex,

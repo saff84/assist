@@ -2,6 +2,10 @@ import { adminProcedure, router } from "./_core/trpc";
 import { countWidgetSites, listWidgetSites } from "./widgetSitesDb";
 import * as ragModule from "./ragModule";
 import { getAllowedOriginsConfig } from "./_core/widgetCors";
+import { widgetAppearanceSchema } from "../shared/widgetAppearance";
+import { readWidgetAppearance, saveWidgetAppearance } from "./widgetAppearanceStore";
+import { widgetConsentSchema } from "../shared/widgetConsent";
+import { readWidgetConsent, saveWidgetConsent } from "./widgetConsentStore";
 
 function resolvePublicBaseUrl(reqHost?: string, proto?: string): string {
   const fromEnv = process.env.PUBLIC_APP_URL?.trim().replace(/\/+$/, "");
@@ -16,6 +20,10 @@ function resolvePublicBaseUrl(reqHost?: string, proto?: string): string {
 }
 
 export const widgetAdminRouter = router({
+  getConsent: adminProcedure.query(() => readWidgetConsent()),
+  saveConsent: adminProcedure.input(widgetConsentSchema).mutation(({ input }) => saveWidgetConsent(input)),
+  getAppearance: adminProcedure.query(() => readWidgetAppearance()),
+  saveAppearance: adminProcedure.input(widgetAppearanceSchema).mutation(({ input }) => saveWidgetAppearance(input)),
   getOverview: adminProcedure.query(async ({ ctx }) => {
     const host = ctx.req.headers.host;
     const xfProto = String(ctx.req.headers["x-forwarded-proto"] || "").split(",")[0]?.trim();
@@ -32,12 +40,10 @@ export const widgetAdminRouter = router({
       websiteQueries = sites.reduce((sum, site) => sum + site.chatCount, 0);
     }
 
-    const widgetAssetVersion = "20261021-chat-tables";
+    const widgetAssetVersion = "20261106-widget-security";
     const embedSnippet = `<script
   src="${publicBaseUrl}/chat-widget.js?v=${widgetAssetVersion}"
   data-api-url="${publicBaseUrl}"
-  data-title="SANEXT Assistant"
-  data-subtitle="Продукция, монтаж и документы SANEXT"
   data-position="bottom-right"
   defer
 ></script>`;

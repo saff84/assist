@@ -1,8 +1,7 @@
 import fs from "fs";
 import path from "path";
-import { execFileSync } from "child_process";
 import { createRequire } from "module";
-import XLSX from "xlsx";
+import XLSX from "./xlsx";
 import mammoth from "mammoth";
 import type { TextItem } from "pdfjs-dist/types/src/display/api";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
@@ -83,11 +82,6 @@ const moduleRequire = createRequire(import.meta.url);
 const PDFJS_BASE_PATH = path.dirname(moduleRequire.resolve("pdfjs-dist/package.json"));
 const CMAP_PATH = path.join(PDFJS_BASE_PATH, "cmaps") + "/";
 const STANDARD_FONT_PATH = path.join(PDFJS_BASE_PATH, "standard_fonts") + "/";
-const TABLE_EXTRACTOR_SCRIPT_PATH = path.join(
-  process.cwd(),
-  "scripts",
-  "extract_tables.py"
-);
 
 type ExternalExtractedTable = {
   page: number;
@@ -591,11 +585,12 @@ async function parsePdfWithPages(filePath: string): Promise<PdfExtractionResult>
   try {
     const metadata = await doc.getMetadata();
     if (metadata?.info) {
+      const info = metadata.info as { Title?: string; Author?: string; Subject?: string; Keywords?: string };
       meta = {
-        title: metadata.info.Title || undefined,
-        author: metadata.info.Author || undefined,
-        subject: metadata.info.Subject || undefined,
-        keywords: metadata.info.Keywords || undefined,
+        title: info.Title || undefined,
+        author: info.Author || undefined,
+        subject: info.Subject || undefined,
+        keywords: info.Keywords || undefined,
       };
     }
   } catch {
@@ -1333,74 +1328,12 @@ function scoreTableForBlock(blockText: string, table: ExternalExtractedTable): n
   return overlapScore + (table.score || 0);
 }
 
+// OCR is intentionally disabled. Return the unavailable sentinel so callers
+// continue with PDF text/coordinates and manual markup without spawning Python.
 function loadExternalTablesForPage(
-  filePath: string,
-  pageNumber: number
+  _filePath: string,
+  _pageNumber: number
 ): ExternalExtractedTable[] | null {
-  if (!fs.existsSync(TABLE_EXTRACTOR_SCRIPT_PATH)) {
-    const msg = `[StructuredParser] Table extractor script missing: ${TABLE_EXTRACTOR_SCRIPT_PATH}`;
-    console.error(msg);
-    if (process.env.TABLE_EXTRACTOR_REQUIRED === "true") {
-      throw new Error(msg);
-    }
-    return null;
-  }
-
-  const pythonCandidates = [
-    process.env.TABLE_EXTRACTOR_PYTHON?.trim(),
-    "python",
-    "python3",
-  ].filter((v): v is string => Boolean(v));
-
-  for (const pythonCmd of pythonCandidates) {
-    try {
-      const stdout = execFileSync(
-        pythonCmd,
-        [TABLE_EXTRACTOR_SCRIPT_PATH, "--file", filePath, "--page", String(pageNumber)],
-        {
-          encoding: "utf-8",
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: 15000,
-          maxBuffer: 4 * 1024 * 1024,
-        }
-      );
-
-      const parsed = JSON.parse(stdout);
-      if (!parsed || parsed.ok === false) {
-        console.warn(
-          `[StructuredParser] Table extractor returned ok=false for page ${pageNumber}:`,
-          parsed?.error || "unknown"
-        );
-        return [];
-      }
-
-      const tablesRaw = Array.isArray(parsed.tables) ? parsed.tables : [];
-      const tables: ExternalExtractedTable[] = tablesRaw
-        .map((table: any) => ({
-          page: Number(table.page || pageNumber),
-          columns: Array.isArray(table.columns) ? table.columns.map((c: any) => String(c)) : [],
-          rows: Array.isArray(table.rows) ? table.rows : [],
-          source: String(table.source || "unknown"),
-          score: Number(table.score || 0),
-          preview: typeof table.preview === "string" ? table.preview : undefined,
-        }))
-        .filter((table) => table.columns.length >= 2 && table.rows.length > 0);
-
-      return tables;
-    } catch (error) {
-      console.warn(
-        `[StructuredParser] Table extractor failed with "${pythonCmd}" on page ${pageNumber}:`,
-        error instanceof Error ? error.message : String(error)
-      );
-      // Try next python command candidate.
-    }
-  }
-
-  const msg = `[StructuredParser] No working Python table extractor for page ${pageNumber} (set TABLE_EXTRACTOR_PYTHON or TABLE_EXTRACTOR_REQUIRED=true to fail hard)`;
-  console.error(msg);
-  if (process.env.TABLE_EXTRACTOR_REQUIRED === "true") {
-    throw new Error(msg);
-  }
   return null;
 }
 
@@ -1902,10 +1835,12 @@ export async function parsePdfDocument(filePath: string): Promise<StructuredDocu
   }
   
   // Закрываем текущий активный раздел в конце документа
-  if (currentActiveSection && (currentActiveSection.pageEnd ?? currentActiveSection.pageStart ?? Infinity) >= lastPage) {
-    currentActiveSection.pageEnd = lastPage;
-    if (currentActiveSection.endLineIndex === undefined) {
-      currentActiveSection.endLineIndex = lastPageLines - 1;
+  // Assignments happen inside forEach callbacks; expose the resulting type to TS.
+  const finalActiveSection = currentActiveSection as DocumentSection | null;
+  if (finalActiveSection && (finalActiveSection.pageEnd ?? finalActiveSection.pageStart ?? Infinity) >= lastPage) {
+    finalActiveSection.pageEnd = lastPage;
+    if (finalActiveSection.endLineIndex === undefined) {
+      finalActiveSection.endLineIndex = lastPageLines - 1;
     }
   }
 

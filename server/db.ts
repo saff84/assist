@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { InsertUser, users } from "../drizzle/schema";
 import { ENV } from './_core/env';
@@ -146,7 +146,7 @@ export async function deleteUserById(userId: number) {
   }
 }
 
-export async function updateUserPassword(userId: number, passwordHash: string) {
+export async function updateUserPassword(userId: number, passwordHash: string, expectedPasswordHash: string) {
   const db = await getDb();
   if (!db) {
     console.warn("[Database] Cannot update password: database not available");
@@ -154,7 +154,9 @@ export async function updateUserPassword(userId: number, passwordHash: string) {
   }
 
   try {
-    await db.update(users).set({ passwordHash }).where(eq(users.id, userId));
+    const result = await db.update(users).set({ passwordHash, sessionVersion: sql`${users.sessionVersion} + 1` })
+      .where(and(eq(users.id, userId), eq(users.passwordHash, expectedPasswordHash)));
+    return result[0].affectedRows === 1;
   } catch (error) {
     console.error("[Database] Failed to update password:", error);
     throw error;
@@ -174,7 +176,8 @@ export async function getUserById(userId: number) {
 
 export async function updateUserSecurity(
   userId: number,
-  data: Pick<InsertUser, "passwordHash" | "mustChangePassword">
+  data: Pick<InsertUser, "passwordHash" | "mustChangePassword">,
+  expectedPasswordHash?: string | null,
 ) {
   const db = await getDb();
   if (!db) {
@@ -183,17 +186,25 @@ export async function updateUserSecurity(
   }
 
   try {
-    await db
+    const result = await db
       .update(users)
       .set({
         passwordHash: data.passwordHash,
         mustChangePassword: data.mustChangePassword,
+        sessionVersion: sql`${users.sessionVersion} + 1`,
       })
-      .where(eq(users.id, userId));
+      .where(expectedPasswordHash ? and(eq(users.id, userId), eq(users.passwordHash, expectedPasswordHash)) : eq(users.id, userId));
+    return result[0].affectedRows === 1;
   } catch (error) {
     console.error("[Database] Failed to update user security:", error);
     throw error;
   }
+}
+
+export async function revokeUserSessions(userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(users).set({ sessionVersion: sql`${users.sessionVersion} + 1` }).where(eq(users.id, userId));
 }
 
 // TODO: add feature queries here as your schema grows.

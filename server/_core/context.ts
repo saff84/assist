@@ -16,9 +16,10 @@ export async function createContext(
   let user: User | null = null;
 
   if (typeof rawCookie === "string" && rawCookie.length > 0) {
-    const userId = await verifyAuthToken(rawCookie);
-    if (userId) {
-      user = (await getUserById(userId)) ?? null;
+    const session = await verifyAuthToken(rawCookie);
+    if (session) {
+      const candidate = await getUserById(session.userId);
+      user = candidate && candidate.sessionVersion === session.sessionVersion ? candidate : null;
     }
   }
 

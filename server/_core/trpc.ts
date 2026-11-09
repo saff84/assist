@@ -11,12 +11,17 @@ const t = initTRPC.context<TrpcContext>().create({
 export const router = t.router;
 export const publicProcedure = t.procedure;
 
+function requirePasswordChangeComplete(user: TrpcContext["user"]) {
+  if (user?.mustChangePassword) throw new TRPCError({ code: "FORBIDDEN", message: "Сначала смените временный пароль" });
+}
+
 const requireUser = t.middleware(async opts => {
   const { ctx, next } = opts;
 
   if (!ctx.user) {
     throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
   }
+  requirePasswordChangeComplete(ctx.user);
 
   return next({
     ctx: {
@@ -43,6 +48,7 @@ export const knowledgeProcedure = t.procedure.use(
         message: "Недостаточно прав для работы с базой знаний",
       });
     }
+    requirePasswordChangeComplete(ctx.user);
 
     return next({
       ctx: {
@@ -60,6 +66,7 @@ export const adminProcedure = t.procedure.use(
     if (!ctx.user || !isAdmin(ctx.user.role)) {
       throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
     }
+    requirePasswordChangeComplete(ctx.user);
 
     return next({
       ctx: {

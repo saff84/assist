@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { __testables } from "../../ragModule";
 import type { RetrieverChunk, DocumentType } from "../../rag/types";
+import { getRagConfig } from "../config";
+import { createStopwordSet, tokenize } from "../textProcessing";
+
+const stopwords = createStopwordSet([]);
+const queryTokens = tokenize("монтаж коллектора sanext", stopwords);
 
 const baseChunk = (overrides: Partial<RetrieverChunk> = {}): RetrieverChunk => ({
   id: 1,
@@ -73,6 +78,8 @@ describe("hybrid retrieval helpers", () => {
     const boosts = computeBoosts(
       chunk,
       "монтаж коллектора sanext",
+      queryTokens,
+      stopwords,
       baseDoc(),
       [],
       new Map(),
@@ -86,6 +93,7 @@ describe("hybrid retrieval helpers", () => {
           language: "ru",
         },
         retrieval: {
+          ...getRagConfig().retrieval,
           embeddingModel: "",
           hybridWeights: { embedding: 0.6, bm25: 0.4 },
           relevanceThreshold: 0.45,
@@ -93,6 +101,7 @@ describe("hybrid retrieval helpers", () => {
           maxInitialChunks: 100,
           mmr: { lambda: 0.7, candidatePoolSize: 20, resultCount: 8 },
           boosts: {
+            ...getRagConfig().retrieval.boosts,
             sectionMatch: 0.1,
             titleMatch: 0.08,
             tagMatch: 0.05,
@@ -129,9 +138,11 @@ describe("hybrid retrieval helpers", () => {
       filename: "Каталог фитингов SANEXT.xlsx",
     });
 
-    const boosts = computeBoosts(
+    const calculateBoosts = (withCatalogPenalty: boolean) => computeBoosts(
       chunk,
       "монтаж коллектора sanext",
+      queryTokens,
+      stopwords,
       baseDoc({
         docType: "catalog",
         filename: "Каталог фитингов SANEXT.xlsx",
@@ -150,6 +161,7 @@ describe("hybrid retrieval helpers", () => {
           language: "ru",
         },
         retrieval: {
+          ...getRagConfig().retrieval,
           embeddingModel: "",
           hybridWeights: { embedding: 0.6, bm25: 0.4 },
           relevanceThreshold: 0.45,
@@ -157,12 +169,13 @@ describe("hybrid retrieval helpers", () => {
           maxInitialChunks: 100,
           mmr: { lambda: 0.7, candidatePoolSize: 20, resultCount: 8 },
           boosts: {
+            ...getRagConfig().retrieval.boosts,
             sectionMatch: 0.1,
             titleMatch: 0.08,
             tagMatch: 0.05,
             skuMatch: 0.12,
             instructionPriority: 0.2,
-            catalogPriority: 0.15,
+            catalogPriority: withCatalogPenalty ? 0.15 : 0,
           },
           stopwords: { extra: [] },
           reranker: { enabled: false },
@@ -178,7 +191,11 @@ describe("hybrid retrieval helpers", () => {
       { installation: true, catalog: false }
     );
 
-    expect(boosts.totalBoost).toBeLessThan(0);
+    const boosts = calculateBoosts(true);
+    const withoutCatalogPenalty = calculateBoosts(false);
+    // Other title/section matches may keep the total positive. The penalty
+    // must still reduce the same candidate's score by catalogPriority / 2.
+    expect(boosts.totalBoost).toBeCloseTo(withoutCatalogPenalty.totalBoost - 0.15 / 2);
     expect(boosts.reasons).toContain("installation_catalog_penalty");
   });
 });

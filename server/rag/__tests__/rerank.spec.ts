@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { rerankChunks } from "../reranker";
 import type { ScoredChunk } from "../types";
+import { getRagConfig } from "../config";
 
 const baseChunk = (id: number): ScoredChunk => ({
   id,
@@ -45,6 +46,7 @@ describe("reranker", () => {
       "тестовый запрос",
       [baseChunk(1), baseChunk(2)],
       {
+        ...getRagConfig().retrieval,
         embeddingModel: "bge-m3",
         hybridWeights: { embedding: 0.6, bm25: 0.4 },
         relevanceThreshold: 0.45,
@@ -52,6 +54,7 @@ describe("reranker", () => {
         maxInitialChunks: 10,
         mmr: { lambda: 0.7, candidatePoolSize: 5, resultCount: 3 },
         boosts: {
+          ...getRagConfig().retrieval.boosts,
           sectionMatch: 0.1,
           titleMatch: 0.08,
           tagMatch: 0.05,
@@ -87,6 +90,7 @@ describe("reranker", () => {
       "тестовый запрос",
       [baseChunk(1), baseChunk(3)],
       {
+        ...getRagConfig().retrieval,
         embeddingModel: "bge-m3",
         hybridWeights: { embedding: 0.6, bm25: 0.4 },
         relevanceThreshold: 0.45,
@@ -94,6 +98,7 @@ describe("reranker", () => {
         maxInitialChunks: 10,
         mmr: { lambda: 0.7, candidatePoolSize: 5, resultCount: 3 },
         boosts: {
+          ...getRagConfig().retrieval.boosts,
           sectionMatch: 0.1,
           titleMatch: 0.08,
           tagMatch: 0.05,
@@ -113,7 +118,8 @@ describe("reranker", () => {
     );
 
     expect(result.applied).toBe(false);
-    expect(result.chunks.map((chunk) => chunk.id)).toEqual([3, 1]);
+    // A failed optional reranker preserves the order supplied by retrieval.
+    expect(result.chunks.map((chunk) => chunk.id)).toEqual([1, 3]);
   });
 });
 

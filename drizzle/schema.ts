@@ -25,6 +25,7 @@ export const users = mysqlTable("users", {
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: mysqlEnum("role", ["admin", "editor"]).default("editor").notNull(),
   mustChangePassword: boolean("mustChangePassword").default(false).notNull(),
+  sessionVersion: int("sessionVersion").default(0).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
@@ -158,6 +159,23 @@ export const documentChunks = mysqlTable(
       productVariantName?: string | null;
       productVariantNormalized?: string | null;
       productVariantSlug?: string | null;
+      annotationType?: string;
+      isManualRegion?: boolean;
+      manualRegionId?: number;
+      isNomenclatureTable?: boolean;
+      notes?: string | null;
+      passportTitle?: string | null;
+      passportSection?: string | null;
+      bbox?: { x: number; y: number; width: number; height: number };
+      faqPairId?: number;
+      questionRegionIds?: number[];
+      answerRegionIds?: number[];
+      regions?: Array<{
+        role?: string;
+        regionId: number;
+        pageNumber: number;
+        bbox: { x: number; y: number; width: number; height: number };
+      }>;
     }>(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
@@ -441,9 +459,17 @@ export const chatHistory = mysqlTable(
         chunkId: number;
         relevance: number;
         filename: string;
+      } | {
+        id: number;
+        relevance: number;
+        filename: string;
       }>;
       mmrTop: Array<{
         chunkId: number;
+        relevance: number;
+        filename: string;
+      } | {
+        id: number;
         relevance: number;
         filename: string;
       }>;
@@ -456,7 +482,7 @@ export const chatHistory = mysqlTable(
       rerankerModel?: string;
       boostsByChunk: Record<
         string,
-        {
+        string[] | {
           boosts: string[];
           finalScore: number;
         }

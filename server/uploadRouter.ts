@@ -14,6 +14,7 @@ import { sections } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { requireKnowledgeAuth } from "./_core/httpAuth";
 import { applyWidgetCors } from "./_core/widgetCors";
+import { requireDocumentAccess } from "./_core/documentAccess";
 import { generateEmbeddingVector } from "./embeddingClient";
 
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "bge-m3";
@@ -177,7 +178,7 @@ const upload = multer({
  */
 export function registerUploadRoutes(app: Express) {
   // Get document file endpoint
-  app.get("/api/documents/:id/file", async (req: Request, res: Response) => {
+  app.get("/api/documents/:id/file", requireDocumentAccess, async (req: Request, res: Response) => {
     try {
 
       const documentId = parseInt(req.params.id, 10);
@@ -257,7 +258,8 @@ export function registerUploadRoutes(app: Express) {
         "Content-Disposition",
         `${asAttachment ? "attachment" : "inline"}; filename="${encodedName}"; filename*=UTF-8''${encodedName}`
       );
-      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("Referrer-Policy", "no-referrer");
       applyWidgetCors(req, res);
       res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
       
@@ -282,7 +284,7 @@ export function registerUploadRoutes(app: Express) {
   });
 
   // Companion PDF (or other) file for download alongside MD knowledge docs
-  app.get("/api/documents/:id/companion", async (req: Request, res: Response) => {
+  app.get("/api/documents/:id/companion", requireDocumentAccess, async (req: Request, res: Response) => {
     try {
       const documentId = parseInt(req.params.id, 10);
       if (isNaN(documentId)) {
@@ -323,7 +325,8 @@ export function registerUploadRoutes(app: Express) {
         "Content-Disposition",
         `${asAttachment ? "attachment" : "inline"}; filename="${encodedName}"; filename*=UTF-8''${encodedName}`
       );
-      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("Referrer-Policy", "no-referrer");
       applyWidgetCors(req, res);
       res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
       res.sendFile(path.resolve(filePath));

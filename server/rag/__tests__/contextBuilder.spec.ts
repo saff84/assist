@@ -91,6 +91,33 @@ describe("contextBuilder", () => {
 
     expect(result.usedSources).toHaveLength(1);
     expect(result.context).toContain("[Источник #1]");
+    expect(result.context).toContain("…»");
+    expect(result.totalTokens).toBeLessThanOrEqual(120);
+  });
+
+  it("keeps fitting text unchanged and skips an oversized table without cutting rows", () => {
+    const source = {
+      documentId: 1, filename: "doc.pdf", documentType: "instruction" as const,
+      chunkIndex: 0, chunkContent: "Проверьте герметичность соединений.", relevance: 0.9, boostsApplied: [],
+    };
+    const caps = { maxChunks: 2, maxChunksPerDoc: 2, maxTokens: 80, chunkTokenLimit: 900 };
+    const table = { ...source, chunkIndex: 1, chunkContent: "| Параметр | Значение |\n| --- | --- |\n" + "| Давление | 10 бар |\n".repeat(100) };
+    const result = buildContext([table, source], caps);
+    expect(result.usedSources).toEqual([source]);
+    expect(result.context).toContain(`«${source.chunkContent}»`);
+    expect(result.context).not.toContain("Параметр");
+    expect(result.totalTokens).toBeLessThanOrEqual(caps.maxTokens);
+  });
+
+  it.each([20, 21, 40, 41, 120])("retains a long text fragment within a %i-token budget", maxTokens => {
+    const source = {
+      documentId: 1, filename: "a", documentType: "instruction" as const,
+      chunkIndex: 0, chunkContent: "Текст ".repeat(1000), relevance: 0.9, boostsApplied: [],
+    };
+    const result = buildContext([source], { maxChunks: 1, maxChunksPerDoc: 1, maxTokens, chunkTokenLimit: 900 });
+    expect(result.usedSources).toHaveLength(1);
+    expect(result.context).toContain("Текст");
+    expect(result.totalTokens).toBeLessThanOrEqual(maxTokens);
   });
 });
 

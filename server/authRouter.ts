@@ -2,7 +2,8 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "./db";
 import { publicProcedure, router } from "./_core/trpc";
-import { getAuthCookieName, getCookieSecureFlag, hashPassword, issueAuthToken, verifyPassword } from "./_core/auth";
+import { getAuthCookieName, getCookieSecureFlag, hashPassword, isLegacyPasswordHash, issueAuthToken, verifyPassword } from "./_core/auth";
+import { clientIp, consumeLimit } from "./_core/requestLimits";
 import { normalizeUserRole } from "./_core/roles";
 
 const passwordSchema = z
@@ -88,12 +89,13 @@ export const authRouter = router({
     .input(
       z.object({
         email: z.string().email("Введите корректный email"),
-        password: z.string().min(1, "Введите пароль"),
+        password: z.string().min(1, "Введите пароль").max(1024),
       })
     )
     .mutation(async ({ input, ctx }) => {
       const email = input.email.trim().toLowerCase();
-      const ip = getClientIp(ctx.req.ip);
+      const ip = getClientIp(clientIp(ctx.req));
+      if (!consumeLimit(`login:${ip}`, 30, LOGIN_WINDOW_MS)) throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Слишком много попыток входа" });
       const key = getAttemptKey(ip, email);
       const now = Date.now();
       const remainingLockMs = getRemainingLockMs(key, now);
@@ -107,8 +109,8 @@ export const authRouter = router({
         });
       }
 
-      const user = await db.getUserByEmail(email);
-      if (!user || !verifyPassword(input.password, user.passwordHash)) {
+      let user = await db.getUserByEmail(email);
+      if (!user || !(await verifyPassword(input.password, user.passwordHash))) {
         const lockMs = registerFailedAttempt(key, now);
         throw new TRPCError({
           code: lockMs > 0 ? "TOO_MANY_REQUESTS" : "UNAUTHORIZED",
@@ -123,7 +125,14 @@ export const authRouter = router({
 
       resetAttempts(key);
 
-      const token = await issueAuthToken(user.id);
+      if (user.passwordHash && isLegacyPasswordHash(user.passwordHash)) {
+        const upgradedHash = await hashPassword(input.password);
+        const changed = await db.updateUserPassword(user.id, upgradedHash, user.passwordHash);
+        if (!changed) throw new TRPCError({ code: "UNAUTHORIZED", message: "Пароль изменился. Войдите повторно" });
+        user = (await db.getUserById(user.id))!;
+        if (!user || user.passwordHash !== upgradedHash) throw new TRPCError({ code: "UNAUTHORIZED", message: "Пароль изменился. Войдите повторно" });
+      }
+      const token = await issueAuthToken(user.id, user.sessionVersion);
       ctx.res.cookie(getAuthCookieName(), token, {
         httpOnly: true,
         secure: getCookieSecureFlag(),
@@ -145,6 +154,7 @@ export const authRouter = router({
     }),
 
   logout: publicProcedure.mutation(async ({ ctx }) => {
+    if (ctx.user) await db.revokeUserSessions(ctx.user.id);
     ctx.res.clearCookie(getAuthCookieName(), {
       path: "/",
       sameSite: "lax",
@@ -157,7 +167,7 @@ export const authRouter = router({
   changePassword: publicProcedure
     .input(
       z.object({
-        currentPassword: z.string().min(1, "Введите текущий пароль"),
+        currentPassword: z.string().min(1, "Введите текущий пароль").max(1024),
         newPassword: passwordSchema,
       })
     )
@@ -165,7 +175,8 @@ export const authRouter = router({
       if (!ctx.user) {
         throw new TRPCError({ code: "UNAUTHORIZED", message: "Требуется вход" });
       }
-      if (!verifyPassword(input.currentPassword, ctx.user.passwordHash)) {
+      if (!consumeLimit(`password:${ctx.user.id}`, 10, LOGIN_WINDOW_MS)) throw new TRPCError({ code: "TOO_MANY_REQUESTS" });
+      if (!(await verifyPassword(input.currentPassword, ctx.user.passwordHash))) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Неверный текущий пароль" });
       }
       if (input.currentPassword === input.newPassword) {
@@ -175,9 +186,17 @@ export const authRouter = router({
         });
       }
 
-      await db.updateUserSecurity(ctx.user.id, {
-        passwordHash: hashPassword(input.newPassword),
+      const newPasswordHash = await hashPassword(input.newPassword);
+      const changed = await db.updateUserSecurity(ctx.user.id, {
+        passwordHash: newPasswordHash,
         mustChangePassword: false,
+      }, ctx.user.passwordHash);
+      if (!changed) throw new TRPCError({ code: "UNAUTHORIZED", message: "Пароль изменился. Войдите повторно" });
+
+      const updated = await db.getUserById(ctx.user.id);
+      if (!updated || updated.passwordHash !== newPasswordHash) throw new TRPCError({ code: "UNAUTHORIZED" });
+      ctx.res.cookie(getAuthCookieName(), await issueAuthToken(updated.id, updated.sessionVersion), {
+        httpOnly: true, secure: getCookieSecureFlag(), sameSite: "lax", path: "/", maxAge: 7 * 24 * 60 * 60 * 1000,
       });
 
       return { success: true };

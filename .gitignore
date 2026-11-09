@@ -14,6 +14,12 @@ client/.cache/
 
 # Environment variables
 .env
+.security-tools/
+.security-reports/
+.knowledge-backups/
+.knowledge-active.json
+__pycache__/
+LOGIN_INFO.txt
 .env.local
 .env.development.local
 .env.test.local
@@ -97,6 +103,7 @@ jspm_packages/
 
 # Output of 'npm pack'
 *.tgz
+!vendor/xlsx-0.20.3.tgz
 
 # Yarn Integrity file
 .yarn-integrity

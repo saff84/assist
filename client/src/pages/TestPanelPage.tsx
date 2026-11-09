@@ -612,7 +612,7 @@ function ChunkContentDialog({
                     <tbody>
                       {chunk.tableData.rows.map((row, idx) => (
                         <tr key={idx} className="border-b">
-                          {chunk.tableData.columns.map((col) => (
+                          {chunk.tableData?.columns.map((col) => (
                             <td key={col} className="p-2">
                               {String(row[col] ?? "")}
                             </td>

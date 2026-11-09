@@ -1,0 +1,26 @@
+[
+  {
+    "image": "library/node:22-bookworm-slim",
+    "index_digest": "sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d",
+    "linux_amd64_digest": "sha256:aaa4b5baf1ecff3b283486bb1f90405cdda225a3e6f79660d2c559fa510a7292",
+    "compressed_bytes": 79850365
+  },
+  {
+    "image": "library/mysql:8.0",
+    "index_digest": "sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b",
+    "linux_amd64_digest": "sha256:62fb722c78b24245ddff1796a0fcee4a49cc5b87e0aaaf20c92d1da9e0a2497b",
+    "compressed_bytes": 233581538
+  },
+  {
+    "image": "semitechnologies/weaviate:1.24.0",
+    "index_digest": "sha256:b6aa634426710b05c0a5c9caca2245ca032257baf24a5e715666709952edb0f5",
+    "linux_amd64_digest": "sha256:6be23511321315d4db3062a704c1664fb8fd71515287c66cb8a3c200ab4b0a3d",
+    "compressed_bytes": 36278404
+  },
+  {
+    "image": "ollama/ollama:latest",
+    "index_digest": "sha256:0e59999e0e8f9fd4e704bd788a89b7e4cad399367fb1365f8c102ac662288761",
+    "linux_amd64_digest": "sha256:a717bfc1c56acfc2e85d3109bd40a7646258ec9062c40cea83b9ed0927eb4223",
+    "compressed_bytes": 3392421545
+  }
+]

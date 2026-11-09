@@ -1,6 +1,5 @@
 import fs from "fs";
 import path from "path";
-import { execFileSync } from "child_process";
 import { createRequire } from "module";
 import type { TextItem } from "pdfjs-dist/types/src/display/api";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
@@ -14,11 +13,6 @@ const moduleRequire = createRequire(import.meta.url);
 const PDFJS_BASE_PATH = path.dirname(moduleRequire.resolve("pdfjs-dist/package.json"));
 const CMAP_PATH = path.join(PDFJS_BASE_PATH, "cmaps") + "/";
 const STANDARD_FONT_PATH = path.join(PDFJS_BASE_PATH, "standard_fonts") + "/";
-const TABLE_EXTRACTOR_SCRIPT_PATH = path.join(
-  process.cwd(),
-  "scripts",
-  "extract_tables.py"
-);
 
 type NormalizedBBox = { x: number; y: number; width: number; height: number };
 
@@ -61,7 +55,6 @@ type ExternalExtractedTable = {
   bbox?: { x: number; y: number; width: number; height: number };
 };
 
-const externalTableCache = new Map<string, ExternalExtractedTable[] | null>();
 
 const CLEAN_TOKEN_REGEX = /[^0-9a-zа-яё]+/giu;
 
@@ -145,79 +138,12 @@ function bboxOverlapScore(
   return inter / areaA;
 }
 
+// OCR is intentionally disabled. Return the unavailable sentinel so callers
+// continue with PDF text/coordinates and manual markup without spawning Python.
 function loadExternalTablesForPage(
-  filePath: string,
-  pageNumber: number
+  _filePath: string,
+  _pageNumber: number
 ): ExternalExtractedTable[] | null {
-  if (!fs.existsSync(TABLE_EXTRACTOR_SCRIPT_PATH)) {
-    return null;
-  }
-
-  const cacheKey = `${filePath}::${pageNumber}`;
-  if (externalTableCache.has(cacheKey)) {
-    return externalTableCache.get(cacheKey) ?? null;
-  }
-
-  const pythonCandidates = [
-    process.env.TABLE_EXTRACTOR_PYTHON?.trim(),
-    "python",
-    "python3",
-  ].filter((v): v is string => Boolean(v));
-
-  for (const pythonCmd of pythonCandidates) {
-    try {
-      const stdout = execFileSync(
-        pythonCmd,
-        [TABLE_EXTRACTOR_SCRIPT_PATH, "--file", filePath, "--page", String(pageNumber)],
-        {
-          encoding: "utf-8",
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: 20000,
-          maxBuffer: 4 * 1024 * 1024,
-        }
-      );
-
-      const parsed = JSON.parse(stdout);
-      if (!parsed || parsed.ok === false) {
-        externalTableCache.set(cacheKey, []);
-        return [];
-      }
-
-      const tablesRaw = Array.isArray(parsed.tables) ? parsed.tables : [];
-      const tables: ExternalExtractedTable[] = tablesRaw
-        .map((table: any) => ({
-          page: Number(table.page || pageNumber),
-          columns: Array.isArray(table.columns)
-            ? table.columns.map((c: any) => String(c))
-            : [],
-          rows: Array.isArray(table.rows) ? table.rows : [],
-          source: String(table.source || "unknown"),
-          score: Number(table.score || 0),
-          preview: typeof table.preview === "string" ? table.preview : undefined,
-          bbox:
-            table.bbox &&
-            typeof table.bbox.x === "number" &&
-            typeof table.bbox.y === "number" &&
-            typeof table.bbox.width === "number" &&
-            typeof table.bbox.height === "number"
-              ? {
-                  x: table.bbox.x,
-                  y: table.bbox.y,
-                  width: table.bbox.width,
-                  height: table.bbox.height,
-                }
-              : undefined,
-        }))
-        .filter((t) => t.columns.length >= 2 && t.rows.length > 0);
-
-      externalTableCache.set(cacheKey, tables);
-      return tables;
-    } catch {
-      // Try next python executable candidate.
-    }
-  }
-
-  externalTableCache.set(cacheKey, null);
   return null;
 }
 

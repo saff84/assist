@@ -1,6 +1,5 @@
-import * as pdfjsLib from "pdf-parse";
 import mammoth from "mammoth";
-import * as XLSX from "xlsx";
+import XLSX from "./xlsx";
 import fs from "fs/promises";
 
 /**

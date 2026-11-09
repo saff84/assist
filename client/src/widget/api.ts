@@ -1,4 +1,8 @@
 import { chatGreetingSchema, type ChatGreetingSettings } from "@shared/chatGreeting";
+import { widgetConsentConfigSchema, type WidgetConsentConfig } from "@shared/widgetConsent";
+export class WidgetConsentRequiredError extends Error {
+  constructor(public readonly consent: WidgetConsentConfig) { super("CONSENT_REQUIRED"); }
+}
 export type WidgetDocumentType =
   | "catalog"
   | "instruction"
@@ -93,15 +97,37 @@ export class WidgetApiClient {
     return response.json() as Promise<WidgetTopics>;
   }
 
+  async getConsent(): Promise<WidgetConsentConfig> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      const response = await fetch(this.url("/api/widget/consent"), { cache: "no-store", signal: controller.signal });
+      if (!response.ok) throw new Error("Не удалось загрузить настройки согласия");
+      return widgetConsentConfigSchema.parse(await response.json());
+    } finally { clearTimeout(timeout); }
+  }
+
   async getGreeting(signal?:AbortSignal):Promise<ChatGreetingSettings> {
     const response=await fetch(this.url("/api/widget/greeting"),{cache:"no-store",signal});
     if(!response.ok)throw new Error("Не удалось загрузить приветствие");
     return chatGreetingSchema.parse(await response.json());
   }
 
+  async acceptConsent(sessionId: string, version: string): Promise<string> {
+    const response = await fetch(this.url("/api/widget/consent/accept"), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId, version }), signal: AbortSignal.timeout(10_000),
+    });
+    const data = await response.json();
+    if (response.status === 409 && data.error === "CONSENT_REQUIRED") throw new WidgetConsentRequiredError(widgetConsentConfigSchema.parse(data.consent));
+    if (!response.ok || typeof data.token !== "string") throw new Error("Не удалось сохранить согласие");
+    return data.token;
+  }
+
   async askAssistant(input: {
     query: string;
     sessionId: string;
+    consentToken?: string;
     forceDocumentType?: WidgetDocumentType;
   }): Promise<WidgetChatResponse> {
     const response = await fetch(this.url("/api/widget/chat"), {
@@ -110,6 +136,7 @@ export class WidgetApiClient {
       body: JSON.stringify({
         query: input.query,
         sessionId: input.sessionId,
+        consentToken: input.consentToken,
         ...(input.forceDocumentType
           ? { forceDocumentType: input.forceDocumentType }
           : {}),
@@ -118,12 +145,16 @@ export class WidgetApiClient {
 
     if (!response.ok) {
       let detail = "";
+      let body: { error?: string; consent?: unknown } | undefined;
       try {
-        const body = (await response.json()) as { error?: string };
-        if (body?.error) detail = `: ${body.error}`;
+        body = await response.json();
       } catch {
         // ignore non-JSON error bodies
       }
+      if (response.status === 409 && body?.error === "CONSENT_REQUIRED") {
+        throw new WidgetConsentRequiredError(widgetConsentConfigSchema.parse(body.consent));
+      }
+      if (body?.error) detail = `: ${body.error}`;
       throw new Error(`Failed to send message (${response.status})${detail}`);
     }
 

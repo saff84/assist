@@ -2,8 +2,10 @@ import { ChatGreeting } from "@/components/ChatGreeting";
 import { useState, useRef, useEffect, type CSSProperties } from "react";
 import { Loader2, Send, X, MessageCircle, RotateCcw } from "lucide-react";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
-import { WidgetApiClient, type WidgetAttachment, type WidgetSource } from "@/widget/api";
+import { WidgetApiClient, WidgetConsentRequiredError, type WidgetAttachment, type WidgetSource } from "@/widget/api";
+import type { WidgetConsentConfig } from "@shared/widgetConsent";
 import "@/widget/widget.css";
+import { defaultWidgetAppearance, widgetAppearanceSchema } from "@shared/widgetAppearance";
 
 interface Message {
   id: string;
@@ -54,8 +56,8 @@ function resolveApiBaseUrl(apiBaseUrl?: string): string {
 }
 
 export function WebChatWidget({
-  title = "SANEXT Assistant",
-  subtitle = "Продукция, монтаж и документы SANEXT",
+  title,
+  subtitle,
   position = "bottom-right",
   apiBaseUrl,
 }: WebChatWidgetProps) {
@@ -63,19 +65,42 @@ export function WebChatWidget({
   const widgetApi = useRef(new WidgetApiClient(resolvedApiBaseUrl));
 
   const [isOpen, setIsOpen] = useState(false);
+  const [appearance, setAppearance] = useState(defaultWidgetAppearance);
+  const [failedLogo, setFailedLogo] = useState("");
+  useEffect(() => {
+    let controller: AbortController | undefined;
+    const refresh = () => {
+      controller?.abort();
+      controller = new AbortController();
+      void fetch(`${resolvedApiBaseUrl}/api/widget/appearance`, { cache: "no-store", signal: controller.signal })
+        .then(response => { if (!response.ok) throw new Error("Appearance unavailable"); return response.json(); })
+        .then(value => setAppearance(widgetAppearanceSchema.parse(value)))
+        .catch(() => { /* Keep the last available appearance when offline. */ });
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => { controller?.abort(); window.removeEventListener("focus", refresh); };
+  }, [resolvedApiBaseUrl, isOpen]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState(() => `session-${Date.now()}-${Math.random()}`);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [processingStage, setProcessingStage] = useState<ProcessingStage>("idle");
   const [isSending, setIsSending] = useState(false);
+  const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+  const [consentPrompt, setConsentPrompt] = useState<WidgetConsentConfig | null>(null);
+  const [acceptedConsentVersion, setAcceptedConsentVersion] = useState<string>();
+  const [acceptedConsentToken, setAcceptedConsentToken] = useState<string>();
+  const [isCheckingConsent, setIsCheckingConsent] = useState(false);
+  const [consentError, setConsentError] = useState("");
+  const sendingLock = useRef(false);
   const stageTimers = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   useEffect(() => {
     widgetApi.current = new WidgetApiClient(resolvedApiBaseUrl);
   }, [resolvedApiBaseUrl]);
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, consentPrompt, consentError]);
 
   useEffect(
     () => () => {
@@ -106,18 +131,40 @@ export function WebChatWidget({
   };
 
   const handleSendMessage = async () => {
-    if (!input.trim() || processingStage !== "idle" || isSending) return;
-
-
+    if (!input.trim() || processingStage !== "idle" || sendingLock.current || pendingQuestion !== null) return;
+    sendingLock.current = true;
+    const query = input;
     const userMessage: Message = {
       id: `msg-${Date.now()}`,
       type: "user",
-      content: input,
+      content: query,
     };
-    const query = input;
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
+    setPendingQuestion(query);
+    await checkConsentAndSend(query);
+  };
 
+  const checkConsentAndSend = async (query: string) => {
+    setIsCheckingConsent(true);
+    setConsentError("");
+    try {
+      const consent = await widgetApi.current.getConsent();
+      if (consent.enabled && consent.version !== acceptedConsentVersion) {
+        setConsentPrompt(consent);
+        return;
+      }
+      setConsentPrompt(null);
+      await sendQuestion(query, acceptedConsentToken);
+    } catch {
+      setConsentError("Не удалось проверить настройки согласия. Вопрос ещё не отправлен. Повторите попытку.");
+    } finally {
+      setIsCheckingConsent(false);
+      sendingLock.current = false;
+    }
+  };
+
+  const sendQuestion = async (query: string, consentToken?: string) => {
     setProcessingStage("search");
     setIsSending(true);
     stageTimers.current.forEach((timer) => clearTimeout(timer));
@@ -136,7 +183,7 @@ export function WebChatWidget({
       const response = await widgetApi.current.askAssistant({
         query,
         sessionId,
-
+        consentToken,
       });
       appendAssistantMessage(
         response.response,
@@ -144,8 +191,16 @@ export function WebChatWidget({
         response.sources ?? [],
         response.suggestedTopics ?? []
       );
+      setPendingQuestion(null);
     } catch (error) {
       setProcessingStage("idle");
+      if (error instanceof WidgetConsentRequiredError) {
+        setConsentPrompt(error.consent);
+        setAcceptedConsentVersion(undefined);
+        setAcceptedConsentToken(undefined);
+        return;
+      }
+      setPendingQuestion(null);
       console.error("[SANEXT Widget] chat failed:", error);
       setMessages((prev) => [
         ...prev,
@@ -162,12 +217,35 @@ export function WebChatWidget({
     }
   };
 
+  const acceptConsent = async () => {
+    if (!consentPrompt || pendingQuestion === null || sendingLock.current) return;
+    sendingLock.current = true;
+    const version = consentPrompt.version;
+    setIsCheckingConsent(true);
+    setConsentError("");
+    try {
+      const token = await widgetApi.current.acceptConsent(sessionId, version);
+      setAcceptedConsentVersion(version);
+      setAcceptedConsentToken(token);
+      setConsentPrompt(null);
+      await sendQuestion(pendingQuestion, token);
+    } catch (error) {
+      if (error instanceof WidgetConsentRequiredError) setConsentPrompt(error.consent.enabled ? error.consent : null);
+      setConsentError("Не удалось подтвердить согласие. Вопрос ещё не отправлен. Повторите попытку.");
+    } finally { sendingLock.current = false; setIsCheckingConsent(false); }
+  };
+
   const handleNewQuestion = () => {
-    if (isSending || processingStage !== "idle") return;
+    if (sendingLock.current || isSending || processingStage !== "idle") return;
     stageTimers.current.forEach((timer) => clearTimeout(timer));
     stageTimers.current = [];
     setMessages([]);
     setInput("");
+    setPendingQuestion(null);
+    setConsentPrompt(null);
+    setConsentError("");
+    setAcceptedConsentVersion(undefined);
+    setAcceptedConsentToken(undefined);
     setProcessingStage("idle");
     setSessionId(`session-${Date.now()}-${Math.random()}`);
   };
@@ -186,7 +264,7 @@ export function WebChatWidget({
           className="sanext-widget-launcher"
           aria-label="Открыть чат SANEXT"
         >
-          <MessageCircle className="w-7 h-7" strokeWidth={2.1} />
+          <MessageCircle className="w-8 h-8" strokeWidth={2.1} />
         </button>
       </div>
     );
@@ -196,10 +274,13 @@ export function WebChatWidget({
     <div className="sanext-widget" style={{ position: "fixed", zIndex: 2147483000, ...positionStyle }}>
       <div className="sanext-widget-panel">
         <div className="sanext-widget-header">
-          <div className="sanext-widget-brand">
-            <span className="sanext-widget-brand-eyebrow">SANEXT</span>
-            <h3 className="sanext-widget-brand-title">{title}</h3>
-            <p className="sanext-widget-brand-subtitle">{subtitle}</p>
+          <div className="sanext-widget-identity">
+            {appearance.logoUrl && appearance.logoUrl !== failedLogo && <img className="sanext-widget-logo" src={appearance.logoUrl} alt="Логотип ассистента" onError={() => setFailedLogo(appearance.logoUrl)} />}
+            <div className="sanext-widget-brand">
+              {appearance.brand && <span className="sanext-widget-brand-eyebrow">{appearance.brand}</span>}
+              <h3 className="sanext-widget-brand-title">{title ?? appearance.title}</h3>
+              {(subtitle ?? appearance.subtitle) && <p className="sanext-widget-brand-subtitle">{subtitle ?? appearance.subtitle}</p>}
+            </div>
           </div>
           <div className="sanext-widget-header-actions">
             {(messages.length > 0) && (
@@ -207,7 +288,7 @@ export function WebChatWidget({
                 type="button"
                 onClick={handleNewQuestion}
                 className="sanext-widget-new-question"
-                disabled={isSending || processingStage !== "idle"}
+                disabled={isSending || isCheckingConsent || processingStage !== "idle"}
                 aria-label="Задать новый вопрос"
                 title="Задать новый вопрос"
               >
@@ -281,6 +362,23 @@ export function WebChatWidget({
               </div>
             ))
           )}
+          {isCheckingConsent && !isSending && <p role="status" className="sanext-widget-hint">Проверяю настройки диалога…</p>}
+          {consentPrompt && <section aria-label="Согласие на обработку персональных данных" className="sanext-widget-consent">
+            <div className="sanext-widget-bubble sanext-widget-bubble-assistant">
+              <p className="sanext-widget-consent-text">{consentPrompt.text}</p>
+              {consentPrompt.policyUrl && <a className="sanext-widget-consent-link" href={consentPrompt.policyUrl} target="_blank" rel="noopener noreferrer">{consentPrompt.policyUrl}</a>}
+            </div>
+            <button type="button" className="sanext-widget-consent-accept" disabled={isCheckingConsent} onClick={acceptConsent}>{isCheckingConsent ? "Сохранение…" : "ДАЮ СОГЛАСИЕ"}</button>
+          </section>}
+          {consentError && <div role="alert" className="sanext-widget-bubble sanext-widget-bubble-assistant">
+            <p>{consentError}</p>
+            <button type="button" className="sanext-widget-consent-accept" disabled={isCheckingConsent} onClick={() => {
+              if (pendingQuestion !== null && !sendingLock.current) {
+                sendingLock.current = true;
+                void checkConsentAndSend(pendingQuestion);
+              }
+            }}>Повторить</button>
+          </div>}
           <div ref={messagesEndRef} />
         </div>
 
@@ -290,13 +388,13 @@ export function WebChatWidget({
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
             placeholder="Задайте вопрос об изделии или укажите артикул…"
-            disabled={isSending || processingStage !== "idle"}
+            disabled={isSending || pendingQuestion !== null || processingStage !== "idle"}
             className="sanext-widget-input"
           />
           <button
             type="button"
             onClick={handleSendMessage}
-            disabled={!input.trim() || isSending || processingStage !== "idle"}
+            disabled={!input.trim() || isSending || pendingQuestion !== null || processingStage !== "idle"}
             className="sanext-widget-send"
             aria-label="Отправить"
           >

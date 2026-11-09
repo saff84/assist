@@ -52,7 +52,7 @@ export const usersRouter = router({
         openId: `local-${crypto.randomUUID()}`,
         name: input.name.trim(),
         email,
-        passwordHash: hashPassword(input.password),
+        passwordHash: await hashPassword(input.password),
         loginMethod: "email",
         role: input.role,
         mustChangePassword: true,
@@ -112,6 +112,7 @@ export const usersRouter = router({
         .update(users)
         .set({ role: input.role as UserRole })
         .where(eq(users.id, input.userId));
+      await db.revokeUserSessions(input.userId);
 
       return { success: true, userId: input.userId, role: input.role };
     }),
@@ -130,7 +131,7 @@ export const usersRouter = router({
       }
 
       await db.updateUserSecurity(input.userId, {
-        passwordHash: hashPassword(input.newPassword),
+        passwordHash: await hashPassword(input.newPassword),
         mustChangePassword: true,
       });
 

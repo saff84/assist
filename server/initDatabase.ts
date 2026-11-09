@@ -1,53 +1,14 @@
 ﻿import mysql from "mysql2/promise";
 import crypto from "crypto";
-import fs from "fs";
-import path from "path";
-
-type AdminCredentials = {
-  email: string;
-  password: string;
-  name: string;
-};
-
-const DEFAULT_ADMIN_PASSWORD = "admin123";
-
-function readAdminCredentials(): AdminCredentials {
-  const defaultCreds: AdminCredentials = {
-    email: process.env.ADMIN_EMAIL || "admin@admin.local",
-    password: process.env.ADMIN_PASSWORD || "admin123",
-    name: process.env.ADMIN_NAME || "Administrator",
-  };
-
-  try {
-    const loginPath = path.join(process.cwd(), "LOGIN_INFO.txt");
-    if (!fs.existsSync(loginPath)) return defaultCreds;
-
-    const content = fs.readFileSync(loginPath, "utf8");
-    const emailMatch = content.match(/Email:\s*(.+)/i);
-    const passwordMatch = content.match(/Password:\s*(.+)/i);
-
-    return {
-      email: emailMatch?.[1]?.trim() || defaultCreds.email,
-      password: passwordMatch?.[1]?.trim() || defaultCreds.password,
-      name: defaultCreds.name,
-    };
-  } catch (e) {
-    console.warn("[DB Init] Could not read LOGIN_INFO.txt, using defaults", e);
-    return defaultCreds;
-  }
-}
+import { bootstrapAdminCredentials, validateBootstrapPassword } from "./_core/bootstrapAdmin";
+import { getJwtSecret, hashPassword } from "./_core/auth";
 
 /**
  * Initialize database schema and default admin
  */
 export async function initializeDatabase() {
   if (process.env.NODE_ENV === "production") {
-    const jwtSecret = process.env.JWT_SECRET?.trim();
-    if (!jwtSecret || jwtSecret.length < 32) {
-      throw new Error(
-        "JWT_SECRET must be configured and at least 32 characters in production"
-      );
-    }
+    getJwtSecret();
   }
 
   const dbUrl = process.env.DATABASE_URL;
@@ -56,6 +17,7 @@ export async function initializeDatabase() {
     return;
   }
 
+  let connection: mysql.Connection | null = null;
   try {
     // Parse connection string
     const match = dbUrl.match(/mysql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/(.+)/);
@@ -72,7 +34,6 @@ export async function initializeDatabase() {
     const maxAttempts = 40; // ~2 minutes with 3s delay
     const attemptDelayMs = 3000;
 
-    let connection: mysql.Connection | null = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
         connection = await mysql.createConnection({
@@ -102,6 +63,7 @@ export async function initializeDatabase() {
     }
 
     console.log("[DB Init] Connected to database");
+    const readyConnection = connection;
 
     // In production, schema changes should come only from drizzle migrations.
     const bootstrapSchema =
@@ -117,7 +79,7 @@ export async function initializeDatabase() {
     ) => {
       for (const statement of statements) {
         try {
-          await connection.execute(statement);
+          await readyConnection.execute(statement);
         } catch (e: any) {
           if (!allowedErrnos.includes(e?.errno)) {
             throw e;
@@ -138,6 +100,7 @@ export async function initializeDatabase() {
         loginMethod VARCHAR(64),
         role ENUM('admin','editor') NOT NULL DEFAULT 'editor',
         mustChangePassword BOOLEAN NOT NULL DEFAULT FALSE,
+        sessionVersion INT NOT NULL DEFAULT 0,
         createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         lastSignedIn TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -381,6 +344,7 @@ export async function initializeDatabase() {
       `ALTER TABLE users ADD COLUMN loginMethod VARCHAR(64);`,
       `ALTER TABLE users ADD COLUMN role ENUM('admin','editor') NOT NULL DEFAULT 'editor';`,
       `ALTER TABLE users ADD COLUMN mustChangePassword BOOLEAN NOT NULL DEFAULT FALSE;`,
+      `ALTER TABLE users ADD COLUMN sessionVersion INT NOT NULL DEFAULT 0;`,
       `ALTER TABLE users ADD COLUMN lastSignedIn TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;`,
 
       // Ensure key enum columns exist even on older schemas
@@ -503,6 +467,7 @@ export async function initializeDatabase() {
         loginMethod VARCHAR(64),
         role ENUM('admin','editor') NOT NULL DEFAULT 'editor',
         mustChangePassword BOOLEAN NOT NULL DEFAULT FALSE,
+        sessionVersion INT NOT NULL DEFAULT 0,
         createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         lastSignedIn TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -536,6 +501,7 @@ export async function initializeDatabase() {
       `ALTER TABLE users ADD COLUMN loginMethod VARCHAR(64);`,
       `ALTER TABLE users ADD COLUMN role ENUM('admin','editor') NOT NULL DEFAULT 'editor';`,
       `ALTER TABLE users ADD COLUMN mustChangePassword BOOLEAN NOT NULL DEFAULT FALSE;`,
+      `ALTER TABLE users ADD COLUMN sessionVersion INT NOT NULL DEFAULT 0;`,
       `ALTER TABLE users ADD COLUMN lastSignedIn TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;`,
       `ALTER TABLE llm_settings ADD COLUMN useQuickResponses BOOLEAN NOT NULL DEFAULT TRUE;`,
     ]);
@@ -574,10 +540,10 @@ export async function initializeDatabase() {
     }
 
     // Check if admin exists
-    const { email: adminEmail, password: adminPassword, name: adminName } = readAdminCredentials();
+    const { email: adminEmail, password: adminPassword, name: adminName } = bootstrapAdminCredentials();
 
     const [rows] = await connection.execute(
-      "SELECT id FROM users WHERE email = ? LIMIT 1",
+      "SELECT id FROM users WHERE role = 'admin' ORDER BY (email = ?) DESC, id LIMIT 1",
       [adminEmail]
     );
 
@@ -586,7 +552,8 @@ export async function initializeDatabase() {
     if (Array.isArray(rows) && rows.length === 0) {
       // Create admin
       const openId = `admin-${crypto.randomUUID()}`;
-      const passwordHash = crypto.createHash('sha256').update(adminPassword).digest('hex');
+      validateBootstrapPassword(adminPassword);
+      const passwordHash = await hashPassword(adminPassword);
 
       const [result] = await connection.execute(
         `INSERT INTO users (openId, name, email, passwordHash, loginMethod, role, mustChangePassword, lastSignedIn)
@@ -598,7 +565,7 @@ export async function initializeDatabase() {
           passwordHash,
           "email",
           "admin",
-          adminPassword === DEFAULT_ADMIN_PASSWORD,
+          true,
         ]
       );
 
@@ -606,19 +573,9 @@ export async function initializeDatabase() {
 
       console.log("[DB Init] Default admin created!");
       console.log(`[DB Init] Email: ${adminEmail}`);
-      console.log(`[DB Init] Password: ${adminPassword}`);
+
     } else {
       adminId = (rows as any)[0].id;
-      if (adminPassword === DEFAULT_ADMIN_PASSWORD) {
-        const defaultPasswordHash = crypto
-          .createHash("sha256")
-          .update(DEFAULT_ADMIN_PASSWORD)
-          .digest("hex");
-        await connection.execute(
-          "UPDATE users SET mustChangePassword = TRUE WHERE id = ? AND passwordHash = ?",
-          [adminId, defaultPasswordHash]
-        );
-      }
       console.log("[DB Init] Admin already exists");
     }
 
@@ -676,8 +633,12 @@ export async function initializeDatabase() {
     }
 
     await connection.end();
+    connection = null;
   } catch (error) {
     console.error("[DB Init] Error:", error);
+    throw error;
+  } finally {
+    if (connection) await connection.end().catch(error => console.error("[DB Init] Connection close failed", error));
   }
 }
 

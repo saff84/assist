@@ -90,7 +90,7 @@ function DashboardLayoutContent({
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const role = user?.role === "admin" ? "admin" : "editor";
-  const visibleMenuItems = menuItems.filter((item) => item.roles.includes(role));
+  const visibleMenuItems = menuItems.filter((item) => item.roles.some(allowedRole => allowedRole === role));
   const activeMenuItem = visibleMenuItems.find(item => item.path === location);
   const isMobile = useIsMobile();
 

@@ -117,7 +117,7 @@ export const llmRouter = router({
       return { success: true };
     }),
 
-  getLlmStatus: publicProcedure.query(async () => {
+  getLlmStatus: adminProcedure.query(async () => {
     const settings = await llmSettingsDb.getLlmSettingsForInvoke();
     if (settings.provider === "external") {
       return {

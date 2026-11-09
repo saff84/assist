@@ -79,7 +79,7 @@ export default function DocumentVisualizationPage() {
   };
 
   // Group chunks by page (only if chunks exist)
-  const chunksByPage = new Map<number, Array<typeof chunks[0]>>();
+  const chunksByPage = new Map<number, Array<NonNullable<typeof chunks>[number]>>();
   if (chunks && chunks.length > 0) {
     chunks.forEach((chunk) => {
       const page = chunk.pageNumber || 0;
@@ -91,7 +91,7 @@ export default function DocumentVisualizationPage() {
   }
 
   // Group chunks by product group (only if chunks exist)
-  const chunksByGroup = new Map<number | null, Array<typeof chunks[0]>>();
+  const chunksByGroup = new Map<number | null, Array<NonNullable<typeof chunks>[number]>>();
   if (chunks && chunks.length > 0) {
     chunks.forEach((chunk) => {
       const groupId = chunk.annotation?.productGroupId || null;

@@ -306,7 +306,7 @@ export default function DocumentDetailsPage() {
                               <div>
                                 <span className="text-xs text-muted-foreground">Columns: </span>
                                 <span className="text-xs font-mono">
-                                  {chunk.table.columns.join(", ")}
+                                  {(chunk.table.columns ?? []).join(", ")}
                                 </span>
                               </div>
                               {chunk.table.sampleRows && chunk.table.sampleRows.length > 0 && (
@@ -367,7 +367,7 @@ export default function DocumentDetailsPage() {
                                   <div>
                                     <span className="text-muted-foreground">Tags:</span>{" "}
                                     <div className="flex flex-wrap gap-1 mt-1">
-                                      {chunk.metadata.tags.map((tag, idx) => (
+                                      {chunk.metadata.tags.map((tag: string, idx: number) => (
                                         <Badge key={idx} variant="secondary" className="text-xs">
                                           {tag}
                                         </Badge>
@@ -465,7 +465,7 @@ export default function DocumentDetailsPage() {
                             <div className="font-medium">{product.name || "Unnamed Product"}</div>
                             <div className="text-xs text-muted-foreground">
                               SKU: {product.sku}
-                              {product.sectionPath && <> • Section: {product.sectionPath}</>}
+                              {sections.find(section => section.id === product.sectionId)?.sectionPath && <> • Section: {sections.find(section => section.id === product.sectionId)?.sectionPath}</>}
                               {product.pageNumber && <> • Page: {product.pageNumber}</>}
                             </div>
                           </div>
@@ -587,7 +587,7 @@ function ChunkContentDialog({
                     <tbody>
                       {chunk.tableData.rows.map((row, idx) => (
                         <tr key={idx} className="border-b">
-                          {chunk.tableData.columns.map((col) => (
+                          {chunk.tableData?.columns.map((col) => (
                             <td key={col} className="p-2">
                               {String(row[col] ?? "")}
                             </td>

@@ -34,6 +34,7 @@ export interface ProcessedDocument {
   toc: Array<{
     sectionPath: string;
     title: string;
+    level: number;
     pageStart?: number;
     pageEnd?: number;
   }>;
@@ -41,6 +42,7 @@ export interface ProcessedDocument {
     sectionPath: string;
     title: string;
     level: number;
+    parentPath?: string;
     pageStart?: number;
     pageEnd?: number;
   }>;
@@ -64,7 +66,8 @@ export interface ProcessedDocument {
   tokenCount: number;
   chunkIndex: number;
     sectionPath: string;
-    elementType: "text" | "table" | "mixed";
+    elementType: ElementType | "mixed";
+    pageNumber?: number;
   tableRows?: Array<Record<string, string | number | null>>;
     language: string;
     metadata: {
@@ -73,6 +76,11 @@ export interface ProcessedDocument {
       pageRange: string;
       tags: string[];
       importance: "high" | "medium" | "low";
+      subsection?: string;
+      pageNumber?: number;
+      heading?: string;
+      sectionPath?: string;
+      elementType?: ElementType;
     };
   }>;
   documentMetadata: {
@@ -705,7 +713,7 @@ function createStructuredSectionChunks(
     chunkIndex: number;
     sectionPath: string;
     elementType: "text" | "table" | "mixed";
-    tableRows?: Array<{ cells: string[] }>;
+    tableRows?: TableRow[];
     language: string;
     metadata: {
       category: "nomenclature" | "table" | "description" | "warranty";
@@ -1410,7 +1418,7 @@ export async function processDocument(
     chunkIndex: number;
     sectionPath: string;
     elementType: "text" | "table" | "mixed";
-    tableRows?: Array<{ cells: string[] }>;
+    tableRows?: TableRow[];
     language: string;
     metadata: {
       category: "nomenclature" | "table" | "description" | "warranty";
@@ -1467,6 +1475,7 @@ export async function processDocument(
   const toc = (structured.toc || []).map((section) => ({
     sectionPath: section.sectionPath,
     title: section.title,
+    level: section.level,
     pageStart: section.pageStart,
     pageEnd: section.pageEnd,
   }));

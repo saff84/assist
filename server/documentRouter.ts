@@ -331,11 +331,11 @@ export const documentRouter = router({
   /**
    * Ask the assistant (RAG query)
    */
-  askAssistant: publicProcedure
+  askAssistant: knowledgeProcedure
     .input(
       z.object({
-        query: z.string().min(1),
-        sessionId: z.string().optional(),
+        query: z.string().min(1).max(4000),
+        sessionId: z.string().max(200).optional(),
         source: z.enum(["website", "bitrix24", "test"]),
         forceDocumentType: z
           .enum([

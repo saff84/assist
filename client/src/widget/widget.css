@@ -1,4 +1,38 @@
 /* Scoped SANEXT chat widget — graphite + sky blue + warm heat gradient */
+#sanext-chat-widget-root .sanext-widget-consent-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+#sanext-chat-widget-root .sanext-widget-consent-link {
+  color: #2465d5;
+  overflow-wrap: anywhere;
+}
+
+#sanext-chat-widget-root .sanext-widget-consent-accept {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  padding: 14px 18px;
+  border: 0;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--sx-blue-deep);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+#sanext-chat-widget-root .sanext-widget-consent-accept:hover {
+  background: var(--sx-graphite);
+}
+
+#sanext-chat-widget-root .sanext-widget-consent-accept:focus-visible {
+  outline: 3px solid var(--sx-blue);
+  outline-offset: 3px;
+}
+
 #sanext-chat-widget-root .sanext-widget {
   --sx-graphite: #2f343c;
   --sx-graphite-soft: #4a5160;
@@ -31,8 +65,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 64px;
-  height: 64px;
+  width: 76px;
+  height: 76px;
+  animation: sanext-launcher-shake 10s ease-in-out infinite;
   border: none;
   border-radius: 999px;
   cursor: pointer;
@@ -43,6 +78,7 @@
 }
 
 #sanext-chat-widget-root .sanext-widget-launcher:hover {
+  animation: none;
   transform: translateY(-2px) scale(1.03);
   box-shadow: 0 16px 34px rgba(212, 115, 74, 0.35);
 }
@@ -463,6 +499,16 @@
 }
 
 @media (max-width: 480px) {
+  #sanext-chat-widget-root .sanext-widget-new-question {
+    width: 36px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  #sanext-chat-widget-root .sanext-widget-new-question span {
+    display: none;
+  }
+
   #sanext-chat-widget-root .sanext-widget-panel {
     width: calc(100vw - 0.75rem);
     height: calc(100vh - 0.75rem);
@@ -470,7 +516,46 @@
   }
 
   #sanext-chat-widget-root .sanext-widget-launcher {
-    width: 58px;
-    height: 58px;
+    width: 68px;
+    height: 68px;
   }
+}
+
+@keyframes sanext-launcher-shake {
+  0%, 92%, 100% { transform: translateX(0) rotate(0); }
+  93%, 97% { transform: translateX(-2px) rotate(-5deg); }
+  94%, 98% { transform: translateX(2px) rotate(5deg); }
+  95%, 99% { transform: translateX(-1px) rotate(-3deg); }
+  96% { transform: translateX(1px) rotate(3deg); }
+}
+
+#sanext-chat-widget-root .sanext-widget-launcher:focus-visible {
+  animation: none;
+  outline: 3px solid var(--sx-blue-deep);
+  outline-offset: 4px;
+}
+
+#sanext-chat-widget-root .sanext-widget-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+#sanext-chat-widget-root .sanext-widget-logo {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: #fff;
+  padding: 4px;
+}
+
+#sanext-chat-widget-root .sanext-widget-brand {
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #sanext-chat-widget-root .sanext-widget-launcher { animation: none; }
 }

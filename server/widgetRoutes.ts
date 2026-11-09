@@ -6,10 +6,16 @@ import * as ragModule from "./ragModule";
 import { applyWidgetCors } from "./_core/widgetCors";
 import { trackWidgetOrigin } from "./widgetSitesDb";
 import { readChatGreeting } from "./chatGreetingStore";
+import { readWidgetAppearance } from "./widgetAppearanceStore";
+import { readWidgetConsent } from "./widgetConsentStore";
+import { hasWidgetConsent, recordWidgetConsent } from "./widgetConsentReceipt";
+import { clientIp, consumeLimit, withRagCapacity } from "./_core/requestLimits";
+import { signDocumentUrl } from "./_core/documentAccess";
 
 const chatInputSchema = z.object({
-  query: z.string().min(1),
-  sessionId: z.string().optional(),
+  query: z.string().min(1).max(4000),
+  sessionId: z.string().max(200).optional(),
+  consentToken: z.string().max(2000).optional(),
   forceDocumentType: z
     .enum([
       "catalog",
@@ -25,45 +31,28 @@ const chatInputSchema = z.object({
   includeSources: z.boolean().optional(),
 });
 
-/** Simple in-memory rate limit for public widget chat (per IP). */
-const WIDGET_RATE_WINDOW_MS = 60_000;
-const WIDGET_RATE_MAX = 30;
-type RateBucket = { timestamps: number[] };
-const widgetChatRate = new Map<string, RateBucket>();
-
-function clientIp(req: Request): string {
-  const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string" && forwarded.trim()) {
-    return forwarded.split(",")[0]!.trim();
-  }
-  return req.ip || req.socket.remoteAddress || "unknown";
-}
-
-function consumeWidgetRateLimit(ip: string): { ok: true } | { ok: false; retryAfterSec: number } {
-  const now = Date.now();
-  const bucket = widgetChatRate.get(ip) ?? { timestamps: [] };
-  bucket.timestamps = bucket.timestamps.filter((t) => now - t < WIDGET_RATE_WINDOW_MS);
-  if (bucket.timestamps.length >= WIDGET_RATE_MAX) {
-    const oldest = bucket.timestamps[0] ?? now;
-    const retryAfterSec = Math.max(1, Math.ceil((WIDGET_RATE_WINDOW_MS - (now - oldest)) / 1000));
-    widgetChatRate.set(ip, bucket);
-    return { ok: false, retryAfterSec };
-  }
-  bucket.timestamps.push(now);
-  widgetChatRate.set(ip, bucket);
-  return { ok: true };
-}
-
-// Periodic cleanup to avoid unbounded growth
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, bucket] of widgetChatRate.entries()) {
-    bucket.timestamps = bucket.timestamps.filter((t) => now - t < WIDGET_RATE_WINDOW_MS);
-    if (!bucket.timestamps.length) widgetChatRate.delete(key);
-  }
-}, 5 * 60_000).unref?.();
-
 export function registerWidgetRoutes(app: Express) {
+  app.post("/api/widget/consent/accept", async (req, res) => {
+    if (!consumeLimit(`consent:${clientIp(req)}`, 10)) { res.status(429).json({ error: "Too many requests" }); return; }
+    const parsed = z.object({ sessionId: z.string().min(1).max(200), version: z.string().regex(/^[a-f0-9]{64}$/) }).safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: "Invalid request" }); return; }
+    try {
+      const consent = await readWidgetConsent();
+      if (!consent.enabled || consent.version !== parsed.data.version) { res.status(409).json({ error: "CONSENT_REQUIRED", consent }); return; }
+      res.setHeader("Cache-Control", "no-store");
+      res.json(await recordWidgetConsent(consent, parsed.data.sessionId, req.headers.origin || ""));
+    } catch { res.status(503).json({ error: "Не удалось сохранить согласие" }); }
+  });
+  app.get("/api/widget/consent", async (_req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "no-store");
+    try { res.json(await readWidgetConsent()); }
+    catch { res.status(503).json({ error: "Не удалось загрузить настройки согласия" }); }
+  });
+  app.get("/api/widget/appearance", async (_req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "no-store");
+    try { res.json(await readWidgetAppearance()); }
+    catch { res.status(500).json({ error: "Не удалось загрузить оформление виджета" }); }
+  });
   app.get("/api/widget/greeting",async(req:Request,res:Response)=>{
     if(!applyWidgetCors(req,res)&&req.headers.origin){res.status(403).json({error:"Origin is not allowed"});return;}
     res.setHeader("Cache-Control","no-store");
@@ -113,12 +102,11 @@ export function registerWidgetRoutes(app: Express) {
       return;
     }
 
-    const rate = consumeWidgetRateLimit(clientIp(req));
-    if (!rate.ok) {
-      res.setHeader("Retry-After", String(rate.retryAfterSec));
+    if (!consumeLimit(`widget:${clientIp(req)}`)) {
+      res.setHeader("Retry-After", "60");
       res.status(429).json({
         error: "Too many requests. Please wait and try again.",
-        retryAfterSec: rate.retryAfterSec,
+        retryAfterSec: 60,
       });
       return;
     }
@@ -129,10 +117,14 @@ export function registerWidgetRoutes(app: Express) {
       return;
     }
 
-    void trackWidgetOrigin(req.headers.origin, "chat");
-
     try {
-      const response = await ragModule.processRAGQuery(
+      const consent = await readWidgetConsent();
+      if (consent.enabled && !(await hasWidgetConsent(parsed.data.consentToken, consent.version, parsed.data.sessionId, req.headers.origin || ""))) {
+        res.status(409).json({ error: "CONSENT_REQUIRED", consent });
+        return;
+      }
+      void trackWidgetOrigin(req.headers.origin, "chat");
+      const response = await withRagCapacity(() => ragModule.processRAGQuery(
         {
           query: parsed.data.query,
           sessionId: parsed.data.sessionId,
@@ -143,7 +135,11 @@ export function registerWidgetRoutes(app: Express) {
           topK: 12,
           forceDocumentType: parsed.data.forceDocumentType,
         }
-      );
+      ));
+
+      const attachments = await Promise.all((response.attachments ?? []).map(async attachment => ({
+        ...attachment, previewUrl: await signDocumentUrl(attachment.previewUrl), downloadUrl: await signDocumentUrl(attachment.downloadUrl),
+      })));
 
       const sources =
         parsed.data.includeSources === false
@@ -159,13 +155,14 @@ export function registerWidgetRoutes(app: Express) {
 
       res.json({
         response: response.response,
-        attachments: response.attachments ?? [],
+        attachments,
         sources: sources ?? [],
         suggestedTopics: response.suggestedTopics ?? [],
         mode: response.mode ?? (parsed.data.forceDocumentType ? "scoped" : "company"),
         responseTime: response.responseTime,
       });
     } catch (error) {
+      if (error instanceof Error && error.message === "RAG_CAPACITY_EXCEEDED") { res.status(429).json({ error: "Ассистент занят. Повторите запрос позже." }); return; }
       console.error("[Widget] Failed to process chat:", error);
       res.status(500).json({ error: "Failed to process query" });
     }

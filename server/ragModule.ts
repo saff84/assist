@@ -274,7 +274,7 @@ async function fetchRawChunks(
     pageNumber: number | null;
     sectionPath: string | null;
     metadata: any;
-    tableJson: Array<Record<string, string | number | null>> | null;
+    tableJson: Array<Record<string, string | number | null>> | null | undefined;
     docType: DocumentType;
     processingType: string;
     filename: string;
@@ -1513,7 +1513,7 @@ function tableRowsToMarkdown(
   const charCol = columns.find((c) => /характеристик/i.test(c.display))?.original;
   const valueCol = columns.find((c) => /значение/i.test(c.display))?.original;
   const unitCol = columns.find((c) => /ед\.?\s*изм|единиц/i.test(c.display))?.original;
-  const preferredOrder = [charCol, unitCol, valueCol].filter(Boolean);
+  const preferredOrder = [charCol, unitCol, valueCol].filter((column): column is string => Boolean(column));
   const ordered =
     preferredOrder.length >= 2
       ? [
@@ -3275,7 +3275,7 @@ ${assembled}
         chunkIndex: chunk.chunkIndex,
         relevance: chunk.relevance,
         chunkContent: chunk.content,
-        sectionPath: chunk.sectionPath,
+        sectionPath: chunk.sectionPath ?? undefined,
         pageStart: chunk.pageNumber ?? undefined,
         boostsApplied: chunk.boostsApplied ?? [],
       })),
@@ -3918,8 +3918,8 @@ async function executeRAGQuery(
   }
 
   // Fast path for passports/certificates/FAQ/catalog: if answer is obvious, return chunk text without LLM.
-  const primaryDocType =
-    forcedDocType ??
+  const primaryDocType: DocumentType | null =
+    options?.forceDocumentType ??
     (finalChunks.length > 0 &&
     finalChunks.every((c) => c.docType === finalChunks[0].docType)
       ? finalChunks[0].docType

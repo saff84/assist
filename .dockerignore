@@ -4,6 +4,13 @@ npm-debug.log
 .gitignore
 README.md
 .env
+.security-tools
+.security-reports
+.knowledge-backups
+.knowledge-active.json
+__pycache__
+LOGIN_INFO.txt
+uploads
 .env.local
 .env.*.local
 dist
