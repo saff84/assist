@@ -28,3 +28,23 @@ it("refuses insecure first-run bootstrap and closes the database connection", as
   expect(sql.execute.mock.calls.some(([query]) => query.includes("INSERT INTO users"))).toBe(false);
   expect(sql.end).toHaveBeenCalledOnce();
 });
+
+it.each(["false", "true"])("indexes full source URLs without exceeding utf8mb4 key limits (bootstrap=%s)", async bootstrap => {
+  vi.stubEnv("DB_SCHEMA_BOOTSTRAP", bootstrap);
+  sql.execute.mockImplementation(async (query: string) => {
+    // Reproduce the production failure for the old full VARCHAR(1024) index.
+    if (/documents_sourceUrl_uidx\s+(?:ON documents\s*)?\(sourceUrl\)/i.test(query)) {
+      throw Object.assign(new Error("Specified key was too long"), { errno: 1071 });
+    }
+    if (query.startsWith("SELECT id FROM users WHERE role")) return [[{ id: 7 }]];
+    if (query.startsWith("SELECT id FROM system_prompts")) return [[{ id: 1 }]];
+    return [[]];
+  });
+  await expect(initializeDatabase()).resolves.toBeUndefined();
+  const statements = sql.execute.mock.calls.map(([query]) => query as string);
+  const indexes = statements.filter(query => query.includes("documents_sourceUrl_uidx"));
+  expect(indexes.length).toBeGreaterThan(0);
+  expect(indexes.every(query => query.includes("CAST(SHA2(sourceUrl, 256) AS CHAR(64))"))).toBe(true);
+  expect(statements.some(query => /(?:MODIFY|CHANGE).*sourceUrl|DROP TABLE|TRUNCATE|DELETE FROM documents/i.test(query))).toBe(false);
+  expect(sql.end).toHaveBeenCalledOnce();
+});

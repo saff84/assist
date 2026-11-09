@@ -138,7 +138,7 @@ export async function initializeDatabase() {
         updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX uploadedBy_idx (uploadedBy),
         INDEX status_idx (status),
-        UNIQUE KEY documents_sourceUrl_uidx (sourceUrl),
+        UNIQUE KEY documents_sourceUrl_uidx ((CAST(SHA2(sourceUrl, 256) AS CHAR(64)))),
         INDEX documents_syncSource_idx (syncSourceId)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `,
@@ -361,7 +361,7 @@ export async function initializeDatabase() {
       `ALTER TABLE documents ADD COLUMN sourceSyncedAt TIMESTAMP NULL;`,
       `ALTER TABLE documents ADD COLUMN syncSourceId INT;`,
       `ALTER TABLE documents ADD COLUMN year INT;`,
-      `CREATE UNIQUE INDEX documents_sourceUrl_uidx ON documents (sourceUrl);`,
+      `CREATE UNIQUE INDEX documents_sourceUrl_uidx ON documents ((CAST(SHA2(sourceUrl, 256) AS CHAR(64))));`,
       `CREATE INDEX documents_syncSource_idx ON documents (syncSourceId);`,
       `ALTER TABLE documents ADD COLUMN pages INT;`,
       `ALTER TABLE documents ADD COLUMN processingProgress INT NOT NULL DEFAULT 0;`,
@@ -449,7 +449,9 @@ export async function initializeDatabase() {
       `ALTER TABLE documents ADD COLUMN contentHash VARCHAR(64)`,
       `ALTER TABLE documents ADD COLUMN sourceSyncedAt TIMESTAMP NULL`,
       `ALTER TABLE documents ADD COLUMN syncSourceId INT`,
-      `CREATE UNIQUE INDEX documents_sourceUrl_uidx ON documents (sourceUrl)`,
+      // Index a fixed-size digest of the entire URL: VARCHAR(1024) utf8mb4 can
+      // require 4096 bytes, exceeding InnoDB's 3072-byte index limit. Keep URLs intact.
+      `CREATE UNIQUE INDEX documents_sourceUrl_uidx ON documents ((CAST(SHA2(sourceUrl, 256) AS CHAR(64))))`,
       `CREATE INDEX documents_syncSource_idx ON documents (syncSourceId)`,
     ]);
 

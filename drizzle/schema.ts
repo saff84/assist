@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { 
   int, 
   mysqlEnum, 
@@ -113,7 +114,7 @@ export const documents = mysqlTable(
   (table) => ({
     uploadedByIdx: index("uploadedBy_idx").on(table.uploadedBy),
     statusIdx: index("status_idx").on(table.status),
-    sourceUrlIdx: uniqueIndex("documents_sourceUrl_uidx").on(table.sourceUrl),
+    sourceUrlIdx: uniqueIndex("documents_sourceUrl_uidx").on(sql`(CAST(SHA2(${table.sourceUrl}, 256) AS CHAR(64)))`),
     syncSourceIdx: index("documents_syncSource_idx").on(table.syncSourceId),
   })
 );
