@@ -1,4 +1,6 @@
 import { generateEmbeddingVector } from "./embeddingClient";
+import { moderateAssistantResponse } from "./responseModeration";
+import type { InsertChatHistoryRecord } from "../drizzle/schema";
 import { getCachedSectionChunks } from "./rag/sectionCache";
 import { extractDocumentSkus, lookupDocumentsForSku } from "./skuDocumentLookup";
 import { trackIntentStage } from "./intentTrace";
@@ -72,6 +74,7 @@ export interface RAGQuery {
 }
 
 export interface RAGResponse {
+  moderated?: boolean;
   needsClarification?: boolean;
   response: string;
   sources: Array<{
@@ -3358,12 +3361,22 @@ ${context.context}
 }
 
 export async function processRAGQuery(ragQuery:RAGQuery,options?:RAGOptions):Promise<RAGResponse> {
-  return runIntentPipeline(ragQuery,options,executeRAGQuery);
+  const pending: { record?: InsertChatHistoryRecord } = {};
+  const raw = await runIntentPipeline(ragQuery, options,
+    (query, scope) => executeRAGQuery(query, scope, record => { pending.record = record; }));
+  const safe = await moderateAssistantResponse(raw, ragQuery.source);
+  const history = pending.record;
+  if (history) {
+    const db = await getDb();
+    if (db) await db.insert(chatHistory).values({ ...history, response: safe.response,
+      documentsUsed: safe.sources.length, diagnostics: safe.moderated ? null : history.diagnostics });
+  }
+  return safe;
 }
-
 async function executeRAGQuery(
   ragQuery: RAGQuery,
-  options?: RAGOptions
+  options?: RAGOptions,
+  queueHistory?: (record: InsertChatHistoryRecord) => void
 ): Promise<RAGResponse> {
   const start = Date.now();
   const config = getRagConfig();
@@ -4122,7 +4135,6 @@ ${context.context}
 
   // Debug logging: log LLM response
   if (config.logging?.enabled) {
-    console.log(`[RAG] LLM Response (first 500 chars):\n${messageContent.slice(0, 500)}...`);
     console.log(`[RAG] Response length: ${messageContent.length} chars`);
   }
 
@@ -4134,9 +4146,7 @@ ${context.context}
     rerankResult.model
   );
 
-  const db = await getDb();
-  if (db) {
-    await db.insert(chatHistory).values({
+  const historyRecord: InsertChatHistoryRecord = {
       sessionId: ragQuery.sessionId,
       userId: ragQuery.userId,
       query: ragQuery.query,
@@ -4148,8 +4158,7 @@ ${context.context}
         Math.ceil(messageContent.length / TOKEN_CHAR_RATIO),
       documentsUsed: sources.length,
       diagnostics: diagnosticsPayload,
-    });
-  }
+  };
 
   const ragResponse: RAGResponse = {
     response: messageContent,
@@ -4171,6 +4180,7 @@ ${context.context}
     };
   }
 
+  queueHistory?.(historyRecord);
   return ragResponse;
 }
 

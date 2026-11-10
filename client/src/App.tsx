@@ -23,6 +23,7 @@ import DocumentApplicabilityPage from "./pages/DocumentApplicabilityPage";
 import LoginPage from "./pages/LoginPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import WidgetPage from "./pages/WidgetPage";
+import ResponseModerationPage from "./pages/ResponseModerationPage";
 import DashboardLayout from "./components/DashboardLayout";
 import { Loader2 } from "lucide-react";
 
@@ -103,6 +104,7 @@ function Router() {
       <Route path="/query-routing">
         <AuthGate><DashboardLayout><QueryRoutingPage /></DashboardLayout></AuthGate>
       </Route>
+      <Route path="/response-moderation"><AuthGate><DashboardLayout><ResponseModerationPage /></DashboardLayout></AuthGate></Route>
       <Route path="/document-links"><AuthGate><DashboardLayout><DocumentApplicabilityPage /></DashboardLayout></AuthGate></Route>
       <Route path="/test-panel">
         <AuthGate>
