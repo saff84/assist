@@ -7,8 +7,9 @@ import { trackIntentStage } from "./intentTrace";
 import { clarifySearchFailure, hasProductSubject } from "./productQuestion";
 import { runIntentPipeline } from "./intentPipeline";
 import { composeAnswerSystemPrompt } from "./rag/answerSourcePolicy";
+import { scopeInstallationModel } from "./rag/installationModelScope";
 import { retrievalScopeWhere, scopedProductBundle } from "./rag/sourceScope";
-import { chunkInProductScope, hasSiblingModel } from "../shared/productScope";
+import { chunkInProductScope, hasSiblingModel, modelCodes } from "../shared/productScope";
 import { eq, desc, sql } from "drizzle-orm";
 
 import {
@@ -265,7 +266,7 @@ function applyMmr(
 }
 
 async function fetchRawChunks(
-  config: RAGConfig, options?:RAGOptions
+  config: RAGConfig, options?:RAGOptions, installationQuery?: string
 ): Promise<{
   chunks: Array<{
     id: number;
@@ -290,6 +291,10 @@ async function fetchRawChunks(
     throw new Error("Database not available");
   }
 
+  const requestedModels = installationQuery ? modelCodes(installationQuery) : [];
+  const modelTitlePriority = requestedModels.length === 1
+    ? sql`CASE WHEN LOCATE(${requestedModels[0].toLowerCase()}, LOWER(COALESCE(${documents.title}, ${documents.filename}))) > 0 THEN 0 ELSE 1 END`
+    : sql`0`;
   const rows = await db
     .select({
       id: documentChunks.id,
@@ -311,7 +316,7 @@ async function fetchRawChunks(
     .innerJoin(documents, eq(documentChunks.documentId, documents.id))
     .where(retrievalScopeWhere(options))
     // Prefer newer chunks; avoid arbitrary slice of unordered corpus
-    .orderBy(desc(documentChunks.id))
+    .orderBy(modelTitlePriority, desc(documentChunks.id))
     .limit(Math.max(config.retrieval.maxInitialChunks, 500));
 
   const includeFaq=!options?.productScope&&(!options?.allowedDocumentTypes||options.allowedDocumentTypes.includes("warranty_faq"))&&(!options?.forceDocumentType||options.forceDocumentType==="warranty_faq"||options.allowedDocumentTypes?.includes("warranty_faq"));
@@ -881,11 +886,14 @@ async function retrieveAndScoreChunks(
       hasCatalogIntent(query) || options?.forceDocumentType === "catalog",
   };
 
-  const { chunks: allRawChunks, documentMeta } = await fetchRawChunks(config,options);
+  const { chunks: allRawChunks, documentMeta } = await fetchRawChunks(config,options,intents.installation ? query : undefined);
   const typedChunks = options?.allowedDocumentTypes
     ? allRawChunks.filter(chunk => options.allowedDocumentTypes!.includes(chunk.docType))
     : allRawChunks;
-  const rawChunks=options?.productScope?typedChunks.filter(chunk=>chunkInProductScope(chunk,options.productScope!)):typedChunks;
+  const modelChunks = intents.installation && !options?.productScope
+    ? scopeInstallationModel(query, typedChunks)
+    : typedChunks;
+  const rawChunks=options?.productScope?modelChunks.filter(chunk=>chunkInProductScope(chunk,options.productScope!)):modelChunks;
   if (!rawChunks.length) {
     return {
       chunks: [],
