@@ -5,6 +5,7 @@ import { readQueryRouting, saveQueryRouting } from "./queryRoutingStore";
 import { listIntentTraces } from "./intentTrace";
 import { listIntentRecommendations, reviewIntentRecommendation } from "./intentRecommendations";
 import { productSourcePolicy, isSourceComparison } from "../shared/productSourcePolicy";
+import { asksForCompetitorAlternative, competitorAlternativeReply } from "./competitorAlternatives";
 
 export const queryRoutingRouter = router({
   traces: adminProcedure.query(()=>listIntentTraces()),
@@ -15,6 +16,9 @@ export const queryRoutingRouter = router({
   save: adminProcedure.input(queryRoutingSchema).mutation(({input}) => saveQueryRouting(input)),
   preview: adminProcedure.input(z.object({query:z.string().min(1).max(4000), config:queryRoutingSchema}))
     .mutation(({input}) => {
+      if (asksForCompetitorAlternative(input.query, input.config.competitorBrands)) {
+        return {response: competitorAlternativeReply};
+      }
       if(isSourceComparison(input.query))return {ruleId:"source-comparison",ruleName:"Явное сравнение источников",term:"каталог и паспорт",target:"catalog" as const,additionalTargets:["installation" as const]};
       const rule=resolveQueryRoute(input.query,input.config);if(!rule)return null;
       const policy=productSourcePolicy(input.query,[rule.target,...rule.additionalTargets],input.config);

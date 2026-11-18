@@ -293,8 +293,8 @@ async function fetchRawChunks(
 
   const requestedModels = installationQuery ? modelCodes(installationQuery) : [];
   const modelTitlePriority = requestedModels.length === 1
-    ? sql`CASE WHEN LOCATE(${requestedModels[0].toLowerCase()}, LOWER(COALESCE(${documents.title}, ${documents.filename}))) > 0 THEN 0 ELSE 1 END`
-    : sql`0`;
+    ? [sql`CASE WHEN LOCATE(${requestedModels[0].toLowerCase()}, LOWER(COALESCE(${documents.title}, ${documents.filename}))) > 0 THEN 0 ELSE 1 END`]
+    : [];
   const rows = await db
     .select({
       id: documentChunks.id,
@@ -316,7 +316,7 @@ async function fetchRawChunks(
     .innerJoin(documents, eq(documentChunks.documentId, documents.id))
     .where(retrievalScopeWhere(options))
     // Prefer newer chunks; avoid arbitrary slice of unordered corpus
-    .orderBy(modelTitlePriority, desc(documentChunks.id))
+    .orderBy(...modelTitlePriority, desc(documentChunks.id))
     .limit(Math.max(config.retrieval.maxInitialChunks, 500));
 
   const includeFaq=!options?.productScope&&(!options?.allowedDocumentTypes||options.allowedDocumentTypes.includes("warranty_faq"))&&(!options?.forceDocumentType||options.forceDocumentType==="warranty_faq"||options.allowedDocumentTypes?.includes("warranty_faq"));

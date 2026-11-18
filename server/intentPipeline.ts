@@ -11,6 +11,7 @@ import { resolveCatalogSubject } from "./catalogSubject";
 import { resolveCatalogProductScope } from "./catalogProductScope";
 import { modelCodes } from "../shared/productScope";
 import { productSourcePolicy, isSourceComparison } from "../shared/productSourcePolicy";
+import { asksForCompetitorAlternative, competitorAlternativeReply } from "./competitorAlternatives";
 export async function runIntentPipeline(
   ragQuery:RAGQuery, options:RAGOptions|undefined, executeRAGQuery:(query:RAGQuery,options?:RAGOptions)=>Promise<RAGResponse>
 ):Promise<RAGResponse> {
@@ -19,6 +20,12 @@ export async function runIntentPipeline(
   return runWithIntentTrace(trace,async()=>{
     try {
       const config=await readQueryRouting();
+      if (asksForCompetitorAlternative(ragQuery.query, config.competitorBrands)) {
+        trace.method="rule";
+        recordIntentStage("rules","success","Запрошен подбор аналога у другого производителя");
+        recordIntentStage("response","success","Выдан ответ о возможностях подбора SANEXT");
+        return {response:competitorAlternativeReply,sources:[],responseTime:Date.now()-start,tokensUsed:0};
+      }
       const rule=await trackIntentStage("rules","Проверка правил администратора",async()=>resolveQueryRoute(ragQuery.query,config));
       if(!rule)trace.stages[trace.stages.length-1].detail=config.enabled?"Ни одно правило не совпало":"Автоматическая маршрутизация выключена";
       const history=trace.sessionHash?(await listIntentTraces()).filter(item=>item.sessionHash===trace.sessionHash).slice(0,3):[];

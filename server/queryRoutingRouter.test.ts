@@ -3,7 +3,14 @@ vi.mock("./queryRoutingStore",()=>({readQueryRouting:vi.fn(),saveQueryRouting:vi
 import { queryRoutingRouter } from "./queryRoutingRouter";
 import { defaultQueryRouting } from "../shared/queryRouting";
 import { readQueryRouting, saveQueryRouting } from "./queryRoutingStore";
+import { competitorAlternativeReply } from "./competitorAlternatives";
 const caller=(role:string|null)=>queryRoutingRouter.createCaller({user:role?{id:1,role}:null} as any);
+it("previews competitor brands from the unsaved draft", async () => {
+  const query = "Есть ли аналог трубы Стабил у NORD-PIPE?";
+  const config = {...defaultQueryRouting, competitorBrands:["Nord Pipe"]};
+  expect(await caller("admin").preview({query, config})).toEqual({response:competitorAlternativeReply});
+  expect(await caller("admin").preview({query, config:defaultQueryRouting})).toBeNull();
+});
 it("previews an explicit source comparison consistently with the chat",async()=>{
   expect(await caller("admin").preview({query:"сравни характеристики DPV в каталоге и паспорте",config:defaultQueryRouting})).toMatchObject({target:"catalog",additionalTargets:["installation"]});
 });

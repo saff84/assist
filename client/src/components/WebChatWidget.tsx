@@ -1,5 +1,5 @@
 import { ChatGreeting } from "@/components/ChatGreeting";
-import { useState, useRef, useEffect, type CSSProperties } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, type CSSProperties } from "react";
 import { Loader2, Send, X, MessageCircle, RotateCcw } from "lucide-react";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 import { WidgetApiClient, WidgetConsentRequiredError, type WidgetAttachment, type WidgetSource } from "@/widget/api";
@@ -84,8 +84,10 @@ export function WebChatWidget({
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState(() => `session-${Date.now()}-${Math.random()}`);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [processingStage, setProcessingStage] = useState<ProcessingStage>("idle");
+  const isProcessing = processingStage !== "idle";
   const [isSending, setIsSending] = useState(false);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [consentPrompt, setConsentPrompt] = useState<WidgetConsentConfig | null>(null);
@@ -98,9 +100,10 @@ export function WebChatWidget({
   useEffect(() => {
     widgetApi.current = new WidgetApiClient(resolvedApiBaseUrl);
   }, [resolvedApiBaseUrl]);
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, consentPrompt, consentError]);
+  useLayoutEffect(() => {
+    const viewport = messagesRef.current;
+    if (viewport) viewport.scrollTop = viewport.scrollHeight;
+  }, [isOpen, messages, input, isProcessing, isSending, isCheckingConsent, consentPrompt, consentError]);
 
   useEffect(
     () => () => {
@@ -133,6 +136,7 @@ export function WebChatWidget({
   const handleSendMessage = async () => {
     if (!input.trim() || processingStage !== "idle" || sendingLock.current || pendingQuestion !== null) return;
     sendingLock.current = true;
+    inputRef.current?.focus({ preventScroll: true });
     const query = input;
     const userMessage: Message = {
       id: `msg-${Date.now()}`,
@@ -220,6 +224,7 @@ export function WebChatWidget({
   const acceptConsent = async () => {
     if (!consentPrompt || pendingQuestion === null || sendingLock.current) return;
     sendingLock.current = true;
+    inputRef.current?.focus({ preventScroll: true });
     const version = consentPrompt.version;
     setIsCheckingConsent(true);
     setConsentError("");
@@ -237,6 +242,7 @@ export function WebChatWidget({
 
   const handleNewQuestion = () => {
     if (sendingLock.current || isSending || processingStage !== "idle") return;
+    inputRef.current?.focus({ preventScroll: true });
     stageTimers.current.forEach((timer) => clearTimeout(timer));
     stageTimers.current = [];
     setMessages([]);
@@ -324,7 +330,7 @@ export function WebChatWidget({
           </div>
         )}
 
-        <div className="sanext-widget-messages space-y-3">
+        <div ref={messagesRef} className="sanext-widget-messages space-y-3">
           {messages.length === 0 ? (
             <div className="sanext-widget-bubble sanext-widget-bubble-assistant space-y-3">
               <ChatGreeting apiBaseUrl={resolvedApiBaseUrl}/>
@@ -375,20 +381,24 @@ export function WebChatWidget({
             <button type="button" className="sanext-widget-consent-accept" disabled={isCheckingConsent} onClick={() => {
               if (pendingQuestion !== null && !sendingLock.current) {
                 sendingLock.current = true;
+                inputRef.current?.focus({ preventScroll: true });
                 void checkConsentAndSend(pendingQuestion);
               }
             }}>Повторить</button>
           </div>}
-          <div ref={messagesEndRef} />
         </div>
 
         <div className="sanext-widget-footer">
           <input
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+              e.preventDefault();
+              void handleSendMessage();
+            }}
             placeholder="Задайте вопрос об изделии или укажите артикул…"
-            disabled={isSending || pendingQuestion !== null || processingStage !== "idle"}
             className="sanext-widget-input"
           />
           <button

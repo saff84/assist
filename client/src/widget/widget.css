@@ -386,11 +386,6 @@
   background: #fff;
 }
 
-#sanext-chat-widget-root .sanext-widget-input:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 #sanext-chat-widget-root .sanext-widget-send {
   display: inline-flex;
   align-items: center;

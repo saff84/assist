@@ -7,12 +7,23 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { IntentRecommendationsPanel } from "@/components/IntentRecommendationsPanel";
-import { defaultQueryRouting, queryRoutingSchema, routeLabels, type QueryRoutingConfig, type RouteTarget } from "@shared/queryRouting";
+import { defaultCompetitorBrands, defaultQueryRouting, queryRoutingSchema, routeLabels, type QueryRoutingConfig, type RouteTarget } from "@shared/queryRouting";
 import { productSourcePolicy } from "@shared/productSourcePolicy";
 
-type Draft = {enabled:boolean; fallback:QueryRoutingConfig["fallback"]; productAnswersFromCatalogOnly?:boolean; rules:Array<Omit<QueryRoutingConfig["rules"][number], "terms"> & {termsText:string}>};
-const toDraft = (config:QueryRoutingConfig):Draft => ({...config, rules:config.rules.map(rule => ({...rule, termsText:rule.terms.join("\n")}))});
-const toConfig = (draft:Draft):QueryRoutingConfig => ({...draft, rules:draft.rules.map(({termsText,...rule}) => ({...rule, terms:termsText.split(/[\n,;]+/).map(t=>t.trim()).filter(Boolean)}))});
+type Draft = Omit<QueryRoutingConfig, "competitorBrands" | "rules"> & {
+  competitorBrandsText: string;
+  rules: Array<Omit<QueryRoutingConfig["rules"][number], "terms"> & { termsText: string }>;
+};
+const toDraft = ({competitorBrands, rules, ...config}:QueryRoutingConfig):Draft => ({
+  ...config,
+  competitorBrandsText: (competitorBrands ?? defaultCompetitorBrands).join("\n"),
+  rules: rules.map(({terms, ...rule}) => ({...rule, termsText:terms.join("\n")})),
+});
+const toConfig = ({competitorBrandsText, rules, ...draft}:Draft):QueryRoutingConfig => ({
+  ...draft,
+  competitorBrands: competitorBrandsText.split("\n").map(name => name.trim()).filter(Boolean),
+  rules: rules.map(({termsText,...rule}) => ({...rule, terms:termsText.split(/[\n,;]+/).map(t=>t.trim()).filter(Boolean)})),
+});
 
 export default function QueryRoutingPage() {
   const utils = trpc.useUtils();
@@ -23,14 +34,19 @@ export default function QueryRoutingPage() {
   const [previewText,setPreviewText] = useState("");
   useEffect(()=>{if(settings.data && !draft) setDraft(toDraft(settings.data));},[settings.data,draft]);
   const save = trpc.queryRouting.save.useMutation({
-    onSuccess:config=>{utils.queryRouting.get.setData(undefined,config); setDirty(false); toast.success("Правила сохранены и применяются к новым запросам");},
+    onSuccess:config=>{utils.queryRouting.get.setData(undefined,config); setDraft(toDraft(config)); setDirty(false); toast.success("Настройки сохранены и применяются к новым запросам");},
     onError:error=>toast.error(error.message),
   });
   const preview = trpc.queryRouting.preview.useMutation({onError:error=>toast.error(error.message)});
   const edit = (next:Draft) => {setDraft(next); setDirty(true); setPreviewText("");};
   const validated = () => {
     const result=queryRoutingSchema.safeParse(toConfig(draft!));
-    if(!result.success) {toast.error("У каждого правила должны быть название и хотя бы одно слово. Не более 50 правил и 100 слов в правиле."); return null;}
+    if(!result.success) {
+      toast.error(result.error.issues.some(issue => issue.path[0] === "competitorBrands")
+        ? "Введите до 200 вариантов написания. В каждом должно быть от 1 до 80 символов и хотя бы одна буква или цифра."
+        : "У каждого правила должны быть название и хотя бы одно слово. Не более 50 правил и 100 слов в правиле.");
+      return null;
+    }
     return result.data;
   };
   if(settings.isLoading) return <p>Загрузка правил…</p>;
@@ -64,6 +80,17 @@ export default function QueryRoutingPage() {
         <p>Эта политика применяется после правил и определения темы ИИ. Она ограничивает товарные вопросы каталогом, даже если старое правило добавляет «Монтаж». Если данных нет, бот уточняет запрос и не заменяет каталог паспортом. Монтаж, совместимость и явное сравнение источников сохраняют свои базы.</p>
         <p>Точные модели различаются: DPV, DPV-C и DPV Н не заменяют друг друга. Короткое уточнение «характеристики» сохраняет выбранный товар. В старых настройках политика включена по умолчанию; пересоздавать правила и индексы не требуется.</p>
       </CardContent></Card>
+      <Card><CardHeader><CardTitle>Бренды для запросов об аналогах</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <label className="block space-y-2">
+            <span>Названия брендов и варианты написания</span>
+            <Textarea rows={6} value={draft.competitorBrandsText}
+              aria-describedby="competitor-brands-help"
+              onChange={e=>edit({...draft,competitorBrandsText:e.target.value})}/>
+          </label>
+          <p id="competitor-brands-help" className="text-sm text-muted-foreground">Укажите каждый вариант с новой строки, например REHAU и Рехау. Если вопрос касается подбора аналога у указанного бренда, чат предложит помощь с каталогом SANEXT. При пустом списке правило продолжит распознавать фразы вроде «других производителей».</p>
+        </CardContent>
+      </Card>
       {draft.rules.map((rule,index)=><Card key={rule.id}><CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><CardTitle>Правило {index+1}</CardTitle><div className="flex gap-2">
         <Button variant="outline" size="sm" disabled={index===0} onClick={()=>move(index,-1)} aria-label={`Поднять правило ${rule.name}`}>Выше</Button>
         <Button variant="outline" size="sm" disabled={index===draft.rules.length-1} onClick={()=>move(index,1)} aria-label={`Опустить правило ${rule.name}`}>Ниже</Button>
@@ -78,7 +105,7 @@ export default function QueryRoutingPage() {
         <label className="block space-y-2"><span>Слова, словоформы и фразы</span><Textarea rows={4} value={rule.termsText} placeholder={"монтаж*\nустановк*\nподключени*"} onChange={e=>edit({...draft,rules:draft.rules.map(r=>r.id===rule.id?{...r,termsText:e.target.value}:r)})}/></label>
       </CardContent></Card>)}
       <div className="flex flex-wrap gap-3"><Button variant="outline" disabled={draft.rules.length>=50} onClick={()=>edit({...draft,rules:[...draft.rules,{id:crypto.randomUUID(),name:"Новое правило",target:"installation",enabled:true,termsText:""}]})}>Добавить правило</Button>
-        <Button variant="outline" onClick={()=>edit(toDraft(structuredClone(defaultQueryRouting)))}>Вернуть стандартные правила</Button></div>
+        <Button variant="outline" onClick={()=>edit({...toDraft(defaultQueryRouting),competitorBrandsText:draft.competitorBrandsText})}>Вернуть стандартные правила</Button></div>
     </fieldset>
     <Card><CardHeader><CardTitle>Проверить переключение</CardTitle></CardHeader><CardContent className="space-y-3">
       <p className="text-sm text-muted-foreground">Проверка использует текущие поля формы, включая несохранённые изменения. Она не вызывает ИИ и не проверяет наличие документов.</p>
@@ -87,6 +114,10 @@ export default function QueryRoutingPage() {
         const config=validated(); if(!config) return;
         const result=await preview.mutateAsync({query,config}).catch(()=>undefined);
         if(result===undefined) return;
+        if(result && "response" in result) {
+          setPreviewText(result.response ?? "");
+          return;
+        }
         const policy=productSourcePolicy(query,result?[result.target,...result.additionalTargets]:["catalog"],config);
         const message=result ? `Вопрос «${query}» → ${(policy?.targets??[result.target,...result.additionalTargets]).map(target=>routeLabels[target]).join(" + ")}. Правило: «${result.ruleName}», совпадение: «${result.term}».` : draft.enabled && draft.fallback==="llm" ? "Правило не совпало. В реальном запросе тему определит ИИ; эта проверка ИИ не вызывает." : "Правило не совпало. Будет использован ручной раздел или база компании.";
         setPreviewText(message+(policy?`\n${result?"Политика источников":"Для товарной темы действует политика"}: ${policy.reason}`:""));

@@ -25,14 +25,19 @@ export const queryRoutingSchema = z.object({
   enabled: z.boolean(),
   fallback: z.enum(["llm","company"]).default("llm"),
   productAnswersFromCatalogOnly: z.boolean().optional(),
+  competitorBrands: z.array(z.string().trim().min(1).max(80)
+    .regex(/[\p{L}\p{N}]/u, "Укажите название бренда буквами или цифрами"))
+    .max(200).optional(),
   rules: z.array(routingRuleSchema).max(50),
 }).refine(value => new Set(value.rules.map(rule => rule.id)).size === value.rules.length,
   {message: "Идентификаторы правил должны быть уникальными"});
 export type QueryRoutingConfig = z.infer<typeof queryRoutingSchema>;
 export type RouteTarget = z.infer<typeof routeTargetSchema>;
+export const defaultCompetitorBrands = ["REHAU", "Рехау", "Uponor", "Упонор", "VALTEC", "Валтек", "STOUT", "Стаут"] as const;
 export const defaultQueryRouting: QueryRoutingConfig = {
   enabled: true,
   fallback: "llm",
+  competitorBrands: [...defaultCompetitorBrands],
   rules: [
     {id:"installation", name:"Вопросы о монтаже", enabled:true, target:"installation", terms:["монтаж*", "установк*", "подключени*"]},
     {id:"certificates", name:"Поиск сертификатов", enabled:true, target:"certificate", terms:["сертификат*", "сертификаци*"]},

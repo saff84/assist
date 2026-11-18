@@ -13,7 +13,7 @@ it("uses standard rules only when settings do not exist",async()=>{
   await expect(readQueryRouting()).rejects.toThrow("Не удалось прочитать");
 });
 it("persists validated rules atomically in the uploads volume and reads them back",async()=>{
-  const config={...structuredClone(defaultQueryRouting),enabled:false};
+  const config={...structuredClone(defaultQueryRouting),enabled:false,competitorBrands:["Nord Pipe","Норд Пайп"]};
   await saveQueryRouting(config);
   expect(files.writeFile).toHaveBeenCalledWith(expect.stringContaining(queryRoutingPath),JSON.stringify(config,null,2),"utf8");
   expect(files.rename).toHaveBeenCalledWith(expect.stringContaining(".tmp"),queryRoutingPath);

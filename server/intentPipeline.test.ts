@@ -67,6 +67,7 @@ vi.mock("./queryRoutingStore",()=>({readQueryRouting:vi.fn()}));
 vi.mock("./intentClassifier",()=>({classifyQueryIntent:vi.fn()}));
 vi.mock("./intentTrace",async original=>({...await original<typeof import("./intentTrace")>(),listIntentTraces:vi.fn().mockResolvedValue([]),saveIntentTrace:vi.fn().mockResolvedValue(undefined)}));
 import { runIntentPipeline } from "./intentPipeline";
+import { competitorAlternativeReply } from "./competitorAlternatives";
 import { classifyQueryIntent } from "./intentClassifier";
 import { readQueryRouting } from "./queryRoutingStore";
 import { saveIntentTrace, listIntentTraces, trackIntentStage, createIntentTrace } from "./intentTrace";
@@ -76,6 +77,49 @@ const input=(query:string,sessionId="a")=>({query,sessionId,source:"test" as con
 const result={response:"Ответ по теме",sources:[],responseTime:1,tokensUsed:1};
 const decision={targets:["installation","catalog"] as Array<"installation"|"catalog">,confidence:0.9,clarification:"",searchQuery:"совместимость трубы Теплый пол",suggestedTerms:["совместимость"],reason:"Подбор соединения"};
 beforeEach(()=>{vi.clearAllMocks();vi.mocked(readQueryRouting).mockResolvedValue(structuredClone(defaultQueryRouting));vi.mocked(listIntentTraces).mockResolvedValue([]);vi.mocked(classifyQueryIntent).mockResolvedValue(structuredClone(decision));});
+it.each([
+  "подскажи аналоги других производителей на трубу стабил",
+  "предложи аналоги других производителей трубы стабил SANEXT",
+  "Чем заменить трубу от SANEXT из ассортимента конкурентов?",
+  "Есть ли аналог SANEXT Стабил у REHAU?",
+  "А у других производителей?",
+])("declines competitor alternatives before catalog lookup or clarification: %s", async query => {
+  const execute = vi.fn();
+  const reply = await runIntentPipeline(input(query), undefined, execute);
+  expect(reply).toMatchObject({ response: competitorAlternativeReply, sources: [], tokensUsed: 0 });
+  expect(reply.needsClarification).toBeFalsy();
+  expect(resolveCatalogSubject).not.toHaveBeenCalled();
+  expect(classifyQueryIntent).not.toHaveBeenCalled();
+  expect(execute).not.toHaveBeenCalled();
+  expect(saveIntentTrace).toHaveBeenCalledWith(expect.objectContaining({
+    method: "rule",
+    outcome: "answer",
+    stages: expect.arrayContaining([expect.objectContaining({ stage: "retrieval", status: "skipped" })]),
+  }));
+});
+
+it("uses the saved brand list for new chat requests", async () => {
+  const query = input("Есть ли аналог трубы Стабил у NORD-PIPE?");
+  const execute = vi.fn().mockResolvedValue(result);
+  vi.mocked(readQueryRouting).mockResolvedValueOnce({...defaultQueryRouting, competitorBrands:["Nord Pipe"]});
+  expect(await runIntentPipeline(query, undefined, execute)).toMatchObject({response:competitorAlternativeReply});
+  expect(execute).not.toHaveBeenCalled();
+
+  vi.mocked(readQueryRouting).mockResolvedValueOnce({...defaultQueryRouting, competitorBrands:[]});
+  const reply = await runIntentPipeline(query, undefined, execute);
+  expect(reply.response).not.toBe(competitorAlternativeReply);
+});
+
+it.each([
+  "Подбери замену SANEXT Стабил из каталога SANEXT",
+  "Подбери аналог REHAU из каталога SANEXT",
+  "Совместима ли труба SANEXT с фитингами REHAU?",
+  "Труба Стабил, характеристики и артикулы",
+])("keeps regular product requests in the routing pipeline: %s", async query => {
+  const execute = vi.fn().mockResolvedValue(result);
+  await runIntentPipeline(input(query), undefined, execute);
+  expect(execute).toHaveBeenCalled();
+});
 it("uses rules first and does not call the classifier",async()=>{
   const execute=vi.fn().mockResolvedValue(result);
   await runIntentPipeline(input("монтаж по паспорту"),undefined,execute);
