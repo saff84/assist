@@ -141,12 +141,45 @@ export function registerWidgetRoutes(app: Express) {
         ...attachment, previewUrl: await signDocumentUrl(attachment.previewUrl), downloadUrl: await signDocumentUrl(attachment.downloadUrl),
       })));
 
+      const responseSources = response.sources ?? [];
+      const titles = new Map<number, string>();
+      for (const attachment of attachments) {
+        if (attachment.title?.trim()) {
+          titles.set(attachment.documentId, attachment.title.trim());
+        }
+      }
+      const missingTitleIds = [...new Set(responseSources.map(s => s.documentId))]
+        .filter(id => !titles.has(id));
+      await Promise.all(missingTitleIds.map(async id => {
+        const document = await documentDb.getDocumentById(id).catch(() => null);
+        const title = document?.title?.trim() || document?.downloadFilename?.trim();
+        if (title) titles.set(id, title);
+      }));
+
+      const titlesByFilename = new Map<string, string>();
+      for (const source of responseSources) {
+        const title = titles.get(source.documentId);
+        if (source.filename && title && !titlesByFilename.has(source.filename)) {
+          titlesByFilename.set(source.filename, title);
+        }
+      }
+      const filenamePatterns = [...titlesByFilename.keys()]
+        .sort((left, right) => right.length - left.length)
+        .map(filename => filename.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+      const displayResponse = filenamePatterns.length
+        ? response.response.replace(
+            new RegExp(filenamePatterns.join("|"), "g"),
+            filename => titlesByFilename.get(filename) ?? filename,
+          )
+        : response.response;
+
       const sources =
         parsed.data.includeSources === false
           ? undefined
-          : (response.sources ?? []).slice(0, 8).map((s) => ({
+          : responseSources.slice(0, 8).map((s) => ({
               documentId: s.documentId,
               filename: s.filename,
+              title: titles.get(s.documentId),
               chunkIndex: s.chunkIndex,
               relevance: s.relevance,
               pageNumber: s.pageNumber,
@@ -154,7 +187,7 @@ export function registerWidgetRoutes(app: Express) {
             }));
 
       res.json({
-        response: response.response,
+        response: displayResponse,
         attachments,
         sources: sources ?? [],
         suggestedTopics: response.suggestedTopics ?? [],

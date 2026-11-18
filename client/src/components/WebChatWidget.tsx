@@ -425,7 +425,7 @@ function MessageSources({ sources }: { sources: WidgetSource[] }) {
       <ul>
         {list.map((s) => (
           <li key={`${s.documentId}-${s.chunkIndex}`}>
-            {s.filename}
+            {s.title || s.filename}
             {s.pageNumber ? `, стр. ${s.pageNumber}` : ""}
             {s.sectionPath ? ` · ${s.sectionPath}` : ""}
           </li>

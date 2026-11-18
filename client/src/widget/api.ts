@@ -35,6 +35,7 @@ export type WidgetTopics = {
 export type WidgetSource = {
   documentId: number;
   filename: string;
+  title?: string;
   chunkIndex: number;
   relevance: number;
   pageNumber?: number;
